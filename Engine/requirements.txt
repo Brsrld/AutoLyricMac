@@ -8,3 +8,7 @@ numpy>=2.0
 # Audio analysis (Phase 2)
 librosa>=0.11
 soundfile>=0.12
+# Lyric alignment (Phase 3) — Apple-Silicon Whisper; model weights
+# (mlx-community/whisper-base-mlx, ~150 MB) download on first use with
+# explicit user approval.
+mlx-whisper>=0.4
