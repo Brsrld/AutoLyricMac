@@ -16,8 +16,11 @@ HTTP API (127.0.0.1 only):
     GET  /health                -> {"status": "ok", ...}
     POST /inspect               {"url": ...} -> metadata, no download
     POST /jobs                  {"url": ..., "authorized": true} -> {"job_id": ...}
+                                {"kind": "analyze"|"lyrics"|"align"|"subtitle_preview", ...}
     GET  /jobs/<id>             -> job status/progress
     POST /jobs/<id>/cancel      -> request cancellation
+    GET  /lyrics/<job_id>       -> canonical lyrics with timing/confidence
+    POST /lyrics/<job_id>/line  {"line_index": N, "corrected_text"?, "translation"?}
 """
 
 import argparse
@@ -35,10 +38,13 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 DEFAULT_PORT = 8765
-ENGINE_VERSION = "0.2"
+ENGINE_VERSION = "0.3"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_JOBS_DIR = REPO_ROOT / "Cache" / "jobs"
+LYRICS_DB_PATH = REPO_ROOT / "Cache" / "lyrics.db"
+SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
+SUBTITLE_STYLES = ("archiveCollage", "doodleMemory")
 
 # Minimum free disk space required before starting a download.
 MIN_FREE_BYTES = 500 * 1024 * 1024
@@ -174,7 +180,8 @@ class Job:
     """A background job: audio ingestion ("download") or analysis ("analyze")."""
 
     def __init__(self, url=None, video_id=None, kind="download",
-                 source_job_id=None, target_seconds=None, start_override=None):
+                 source_job_id=None, target_seconds=None, start_override=None,
+                 artist=None, title=None, style=None, segment_start=None):
         self.id = new_job_id()
         self.kind = kind
         self.url = url
@@ -182,6 +189,10 @@ class Job:
         self.source_job_id = source_job_id
         self.target_seconds = target_seconds
         self.start_override = start_override
+        self.artist = artist
+        self.title = title
+        self.style = style
+        self.segment_start = segment_start
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
         self.message = "Queued"
@@ -222,6 +233,12 @@ class Job:
         try:
             if self.kind == "analyze":
                 self._run_analysis()
+            elif self.kind == "lyrics":
+                self._run_lyrics()
+            elif self.kind == "align":
+                self._run_align()
+            elif self.kind == "subtitle_preview":
+                self._run_subtitle_preview()
             else:
                 self._run_pipeline()
         except CancelledError:
@@ -244,6 +261,15 @@ class Job:
             except (ValueError, OSError):
                 pass
             return
+        if self.kind == "subtitle_preview":
+            try:
+                for p in SUBTITLE_PREVIEW_DIR.glob(f"*_{self.id[:8]}.mp4"):
+                    p.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        if self.kind != "download":
+            return  # lyrics/align own no files outside the shared database
         try:
             shutil.rmtree(job_dir_for(self.id), ignore_errors=True)
         except ValueError:
@@ -435,6 +461,217 @@ class Job:
                      "reasons": choice.reasons,
                  })
 
+    def _source_audio(self):
+        """Path to the source job's ingested audio, or fail the job."""
+        try:
+            source_dir = job_dir_for(self.source_job_id)
+        except ValueError:
+            self.fail("not_found", "Unknown source job id.")
+            return None
+        audio = source_dir / "audio.m4a"
+        if not audio.exists():
+            self.fail("not_found", "Source job has no ingested audio file.")
+            return None
+        return audio
+
+    def _probe_duration(self, path):
+        probe = self._run_subprocess([FFPROBE, "-v", "error", "-print_format",
+                                      "json", "-show_format", str(path)])
+        if probe is None:
+            raise CancelledError()
+        try:
+            return float(json.loads(probe.stdout)["format"]["duration"])
+        except (KeyError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _run_lyrics(self):
+        """Search lyric providers, rank candidates, store the best match."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lyrics.providers import LyricsProviderError, default_providers
+        from lyrics.ranking import rank_candidates
+        from lyrics.store import LyricsStore
+
+        source_audio = self._source_audio()
+        if source_audio is None:
+            return
+        track_duration = self._probe_duration(source_audio)
+
+        store = LyricsStore(LYRICS_DB_PATH)
+        artist, title = self.artist or "", self.title or ""
+        cache_key = f"search:{artist.lower()}|{title.lower()}|{int(track_duration or 0)}"
+
+        self.set(state="analyzing", progress=0.1,
+                 message=f"Searching lyrics for “{title}”…")
+        candidates = store.cached_search(cache_key)
+        if candidates is None:
+            candidates = []
+            errors = []
+            for provider in default_providers(REPO_ROOT,
+                                              source_audio.parent):
+                self._check_cancel()
+                try:
+                    candidates.extend(provider.search(artist, title,
+                                                      duration=track_duration))
+                except LyricsProviderError as exc:
+                    errors.append(str(exc))
+            if not candidates and errors:
+                self.fail("lyrics_failed", " ".join(errors))
+                return
+            store.store_search(cache_key, candidates)
+
+        self._check_cancel()
+        self.set(progress=0.7, message="Ranking lyric candidates…")
+        ranked = rank_candidates(candidates, artist, title, track_duration)
+        if not ranked:
+            self.fail("lyrics_not_found",
+                      "No plausible lyrics found. You can add a .lrc/.txt file "
+                      "to Cache/lyrics_local/ and search again.")
+            return
+        best = ranked[0]
+        for line in best.reasons:
+            print(f"[engine] job {self.id} lyrics: {line}", flush=True)
+        store.save_lyrics(self.source_job_id, best.candidate,
+                          score=best.score, track_duration=track_duration)
+        payload = store.get_lyrics(self.source_job_id)
+        self.set(state="done", progress=1.0,
+                 message=f"Lyrics ready: {len(payload['lines'])} lines "
+                         f"({'synced' if payload['synced'] else 'plain'}, "
+                         f"score {best.score:.2f}).",
+                 result={
+                     "chosen": best.candidate.summary(),
+                     "score": round(best.score, 3),
+                     "line_count": len(payload["lines"]),
+                     "synced": payload["synced"],
+                     "candidates": [
+                         {**r.candidate.summary(), "score": round(r.score, 3)}
+                         for r in ranked[:5]
+                     ],
+                 })
+
+    def _run_align(self):
+        """Word-align stored lyrics against the ingested audio (mlx-whisper)."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lyrics.align import align_lyrics, transcribe_words
+        from lyrics.store import LyricsStore
+
+        source_audio = self._source_audio()
+        if source_audio is None:
+            return
+        store = LyricsStore(LYRICS_DB_PATH)
+        payload = store.get_lyrics(self.source_job_id)
+        if payload is None:
+            self.fail("not_found", "Fetch lyrics before aligning.")
+            return
+
+        self.set(state="analyzing", progress=0.1,
+                 message="Transcribing vocals (local Whisper)…")
+        try:
+            asr_words = transcribe_words(source_audio, ffmpeg=FFMPEG)
+        except Exception as exc:
+            self.fail("align_failed", f"Transcription failed: {exc}")
+            return
+        self._check_cancel()
+
+        self.set(progress=0.85, message="Aligning lyrics to audio…")
+        line_texts = [ln["display_text"] for ln in payload["lines"]]
+        aligned, matched_ratio, mean_confidence = align_lyrics(line_texts,
+                                                               asr_words)
+        store.apply_alignment(self.source_job_id, aligned, matched_ratio,
+                              mean_confidence)
+        refreshed = store.get_lyrics(self.source_job_id)
+        uncertain = sum(1 for ln in refreshed["lines"] if ln["uncertain"])
+        suspect = refreshed["suspect"]
+        message = (f"Alignment done: {matched_ratio:.0%} of words matched, "
+                   f"{uncertain} uncertain line(s).")
+        if suspect:
+            message += " Lyrics may not match this recording — please review."
+        self.set(state="done", progress=1.0, message=message,
+                 result={
+                     "matched_ratio": matched_ratio,
+                     "mean_confidence": mean_confidence,
+                     "uncertain_lines": uncertain,
+                     "suspect": suspect,
+                     "asr_word_count": len(asr_words),
+                 })
+
+    def _run_subtitle_preview(self):
+        """Render a subtitle-only preview MP4 for the chosen style/segment."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lyrics.store import LyricsStore
+        from subtitles.render import render_subtitle_preview
+
+        source_audio = self._source_audio()
+        if source_audio is None:
+            return
+        payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(self.source_job_id)
+        if payload is None:
+            self.fail("not_found", "Fetch and align lyrics before previewing.")
+            return
+
+        seg_start = float(self.segment_start or 0.0)
+        duration = float(self.target_seconds)
+        seg_end = seg_start + duration
+        lines = []
+        for ln in payload["lines"]:
+            if ln["start"] is None or ln["end"] is None:
+                continue
+            if ln["end"] <= seg_start or ln["start"] >= seg_end:
+                continue
+            words = [{"text": w["text"],
+                      "start": None if w["start"] is None
+                      else max(0.0, w["start"] - seg_start),
+                      "end": None if w["end"] is None
+                      else w["end"] - seg_start}
+                     for w in ln["words"]]
+            lines.append({
+                "display_text": ln["display_text"],
+                "translation": ln["translation"],
+                "start": max(0.0, ln["start"] - seg_start),
+                "end": min(duration, ln["end"] - seg_start),
+                "uncertain": ln["uncertain"],
+                "words": words,
+            })
+        if not lines:
+            self.fail("no_timed_lines",
+                      "No aligned lyric lines fall inside this segment.")
+            return
+
+        self.set(state="analyzing", progress=0.05,
+                 message=f"Rendering {self.style} subtitle preview…")
+        SUBTITLE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        out_path = SUBTITLE_PREVIEW_DIR / f"{self.source_job_id[:8]}_{self.style}_{self.id[:8]}.mp4"
+
+        def progress(frac, msg):
+            self._check_cancel()
+            self.set(progress=0.05 + 0.85 * frac, message=msg)
+
+        try:
+            qa_frames = render_subtitle_preview(
+                self.style, lines, source_audio, out_path,
+                duration=duration, audio_offset=seg_start, progress=progress)
+        except CancelledError:
+            out_path.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            out_path.unlink(missing_ok=True)
+            self.fail("render_failed", f"Subtitle preview failed: {exc}")
+            return
+
+        self._check_cancel()
+        self.set(state="verifying", progress=0.95, message="Verifying preview…")
+        seg_duration = self._probe_duration(out_path)
+        if seg_duration is None or abs(seg_duration - duration) > 0.5:
+            self.fail("ffmpeg_failed", "Rendered preview failed verification.")
+            return
+        self.set(state="done", progress=1.0,
+                 message=f"Subtitle preview ready ({len(lines)} lines).",
+                 audio_path=str(out_path),
+                 audio_duration=seg_duration,
+                 result={"output_path": str(out_path),
+                         "qa_frames": qa_frames,
+                         "line_count": len(lines),
+                         "style": self.style})
+
     def _run_subprocess(self, cmd):
         """Run a tool with list args (never a shell); poll for cancellation."""
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -521,6 +758,17 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, job.snapshot())
             return
+        m = re.match(r"^/lyrics/([0-9a-f]{32})$", self.path)
+        if m:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from lyrics.store import LyricsStore
+            payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(m.group(1))
+            if payload is None:
+                self._send_json(404, {"error_code": "not_found",
+                                      "message": "No lyrics stored for this job."})
+            else:
+                self._send_json(200, payload)
+            return
         self._send_json(404, {"error_code": "not_found", "message": "Unknown endpoint."})
 
     def do_POST(self):
@@ -542,7 +790,44 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             kind = body.get("kind", "download")
-            if kind == "analyze":
+            if kind in ("lyrics", "align", "subtitle_preview"):
+                source_id = body.get("source_job_id", "")
+                if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
+                    self._send_json(400, {"error_code": "not_found",
+                                          "message": "A valid 'source_job_id' is required."})
+                    return
+                if kind == "lyrics":
+                    title = str(body.get("title") or "").strip()
+                    if not title:
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": "A 'title' is required to search lyrics."})
+                        return
+                    job = Job(kind="lyrics", source_job_id=source_id,
+                              artist=str(body.get("artist") or "").strip()[:200],
+                              title=title[:200])
+                elif kind == "align":
+                    job = Job(kind="align", source_job_id=source_id)
+                else:
+                    style = body.get("style")
+                    if style not in SUBTITLE_STYLES:
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": f"'style' must be one of {SUBTITLE_STYLES}."})
+                        return
+                    try:
+                        target = float(body.get("target_seconds", 0))
+                        seg_start = max(0.0, float(body.get("segment_start", 0)))
+                    except (TypeError, ValueError):
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": "'target_seconds' and 'segment_start' must be numbers."})
+                        return
+                    if not 5 <= target <= 120:
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": "'target_seconds' must be between 5 and 120."})
+                        return
+                    job = Job(kind="subtitle_preview", source_job_id=source_id,
+                              style=style, target_seconds=target,
+                              segment_start=seg_start)
+            elif kind == "analyze":
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",
@@ -590,6 +875,34 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 JOBS[job.id] = job
             threading.Thread(target=job.run, daemon=True, name=f"job-{job.id}").start()
             self._send_json(202, {"job_id": job.id})
+            return
+
+        m = re.match(r"^/lyrics/([0-9a-f]{32})/line$", self.path)
+        if m:
+            body = self._read_json_body()
+            if body is None or not isinstance(body.get("line_index"), int):
+                self._send_json(400, {"error_code": "invalid_request",
+                                      "message": "JSON with an integer 'line_index' is required."})
+                return
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from lyrics.store import LyricsStore
+            store = LyricsStore(LYRICS_DB_PATH)
+            kwargs = {}
+            if "corrected_text" in body:
+                kwargs["corrected_text"] = str(body["corrected_text"] or "")[:500]
+            if "translation" in body:
+                kwargs["translation"] = str(body["translation"] or "")[:500]
+            if not kwargs:
+                self._send_json(400, {"error_code": "invalid_request",
+                                      "message": "Provide 'corrected_text' and/or 'translation'."})
+                return
+            if not store.update_line(m.group(1), body["line_index"], **kwargs):
+                self._send_json(404, {"error_code": "not_found",
+                                      "message": "No such lyric line for this job."})
+                return
+            payload = store.get_lyrics(m.group(1))
+            line = payload["lines"][body["line_index"]]
+            self._send_json(200, line)
             return
 
         m = re.match(r"^/jobs/([0-9a-f]{32})/cancel$", self.path)
