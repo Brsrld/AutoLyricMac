@@ -1,0 +1,4 @@
+# AutoLyricMac engine dependencies — Step 2 (kept minimal on purpose).
+# yt-dlp is used as a modular local source adapter for authorized media only.
+# FFmpeg/ffprobe come from Homebrew, not pip.
+yt-dlp>=2026.7.4

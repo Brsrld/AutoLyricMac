@@ -10,6 +10,11 @@ let package = Package(
         .executableTarget(
             name: "AutoLyricMac",
             path: "Sources/AutoLyricMac"
+        ),
+        .testTarget(
+            name: "AutoLyricMacTests",
+            dependencies: ["AutoLyricMac"],
+            path: "Tests/AutoLyricMacTests"
         )
     ]
 )

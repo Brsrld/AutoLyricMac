@@ -1,7 +1,25 @@
 import SwiftUI
 
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        EngineManager.shared.startIfNeeded()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Stop the engine cleanly; its parent-pid watchdog is the backstop.
+        EngineManager.shared.stop()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+
 @main
 struct AutoLyricMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         // Unbuffered stdout so status prints appear immediately when piped to a log.
         setvbuf(stdout, nil, _IONBF, 0)
@@ -13,8 +31,8 @@ struct AutoLyricMacApp: App {
 
     var body: some Scene {
         WindowGroup("AutoLyricMac") {
-            ContentView()
-                .frame(minWidth: 480, minHeight: 420)
+            ContentView(engineManager: EngineManager.shared)
+                .frame(minWidth: 520, minHeight: 640)
         }
         .windowResizability(.contentSize)
     }
