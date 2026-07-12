@@ -1,0 +1,22 @@
+# Swift / Xcode
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/xcode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Project working dirs (generated content, not source)
+Output/*
+Cache/*
+Logs/*
+!Output/.gitkeep
+!Cache/.gitkeep
+!Logs/.gitkeep
+
+# macOS
+.DS_Store
