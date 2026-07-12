@@ -6,7 +6,7 @@ This application only processes music or media the user owns, licenses, or is au
 
 ## Status
 
-**Step 2 — audio-ingestion pipeline.** The app auto-starts the local Python engine, inspects YouTube URLs for metadata (no download), and can run an authorized audio-download test: yt-dlp → FFmpeg (AAC/M4A) → ffprobe verification, with progress and cancellation. No AI, rendering, or publishing integrations yet.
+**Step 2 + Phase 0 complete.** The app auto-starts the local Python engine, inspects YouTube URLs for metadata (no download), and can run an authorized audio-download test: yt-dlp → FFmpeg (AAC/M4A) → ffprobe verification, with progress and cancellation. Phase 0 adds reference analysis (`Docs/REFERENCE_ANALYSIS.md`) and two 15-second 1080x1920 style prototypes (`Engine/render/`, outputs in `Output/prototypes/`) rendered from public-domain/CC0 media (`References/proto_media/ATTRIBUTION.json`). No AI or publishing integrations yet.
 
 ## Structure
 

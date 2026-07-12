@@ -2,3 +2,6 @@
 # yt-dlp is used as a modular local source adapter for authorized media only.
 # FFmpeg/ffprobe come from Homebrew, not pip.
 yt-dlp>=2026.7.4
+# Rendering (Phase 0 prototypes onward)
+Pillow>=11.0
+numpy>=2.0

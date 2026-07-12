@@ -18,5 +18,8 @@ Logs/*
 !Cache/.gitkeep
 !Logs/.gitkeep
 
+# Third-party reference videos (not redistributable; keep locally only)
+References/*.mp4
+
 # macOS
 .DS_Store
