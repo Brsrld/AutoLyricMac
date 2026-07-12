@@ -171,19 +171,25 @@ def job_dir_for(job_id, base_dir=None):
 # --------------------------------------------------------------------------
 
 class Job:
-    """One audio-ingestion job: download bestaudio, convert to m4a, verify."""
+    """A background job: audio ingestion ("download") or analysis ("analyze")."""
 
-    def __init__(self, url, video_id):
+    def __init__(self, url=None, video_id=None, kind="download",
+                 source_job_id=None, target_seconds=None, start_override=None):
         self.id = new_job_id()
+        self.kind = kind
         self.url = url
         self.video_id = video_id
-        self.state = "queued"          # queued|downloading|converting|verifying|done|error|cancelled
+        self.source_job_id = source_job_id
+        self.target_seconds = target_seconds
+        self.start_override = start_override
+        self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
         self.message = "Queued"
         self.error_code = None
         self.audio_path = None
         self.audio_duration = None
         self.audio_format = None
+        self.result = None             # kind-specific extras (analysis payload)
         self.cancel_event = threading.Event()
         self.lock = threading.Lock()
 
@@ -191,6 +197,7 @@ class Job:
         with self.lock:
             return {
                 "job_id": self.id,
+                "kind": self.kind,
                 "state": self.state,
                 "progress": round(self.progress, 4),
                 "message": self.message,
@@ -198,6 +205,7 @@ class Job:
                 "audio_path": self.audio_path,
                 "audio_duration": self.audio_duration,
                 "audio_format": self.audio_format,
+                "result": self.result,
             }
 
     def set(self, **kwargs):
@@ -212,7 +220,10 @@ class Job:
 
     def run(self):
         try:
-            self._run_pipeline()
+            if self.kind == "analyze":
+                self._run_analysis()
+            else:
+                self._run_pipeline()
         except CancelledError:
             self.set(state="cancelled", error_code="cancelled", message="Job cancelled.")
             self._cleanup_dir()
@@ -224,6 +235,15 @@ class Job:
             raise CancelledError()
 
     def _cleanup_dir(self):
+        if self.kind == "analyze":
+            # analysis writes into the source job's dir; remove only our segment
+            try:
+                for p in job_dir_for(self.source_job_id).glob(
+                        f"segment_*{self.id[:8]}.m4a"):
+                    p.unlink(missing_ok=True)
+            except (ValueError, OSError):
+                pass
+            return
         try:
             shutil.rmtree(job_dir_for(self.id), ignore_errors=True)
         except ValueError:
@@ -335,6 +355,86 @@ class Job:
                  audio_duration=duration,
                  audio_format=codec)
 
+    def _run_analysis(self):
+        """Analyze an ingested job's audio and cut the best segment."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from analysis.audio_analysis import analyze_audio, select_segment, cut_segment
+
+        if FFMPEG is None or FFPROBE is None:
+            self.fail("ffmpeg_failed", "FFmpeg/ffprobe not found.")
+            return
+        try:
+            source_dir = job_dir_for(self.source_job_id)
+        except ValueError:
+            self.fail("not_found", "Unknown source job id.")
+            return
+        source_audio = source_dir / "audio.m4a"
+        if not source_audio.exists():
+            self.fail("not_found", "Source job has no ingested audio file.")
+            return
+
+        self.set(state="analyzing", message="Analyzing audio…")
+
+        def progress(frac, msg):
+            self._check_cancel()
+            self.set(progress=0.75 * frac, message=msg)
+
+        try:
+            analysis = analyze_audio(source_audio, FFMPEG, progress=progress)
+        except CancelledError:
+            raise
+        except Exception as exc:
+            self.fail("analysis_failed", f"Audio analysis failed: {exc}")
+            return
+
+        self._check_cancel()
+        self.set(progress=0.8, message="Selecting the best segment…")
+        choice = select_segment(analysis, self.target_seconds,
+                                start_override=self.start_override)
+        for line in choice.reasons:
+            print(f"[engine] job {self.id} segment: {line}", flush=True)
+
+        segment_path = source_dir / f"segment_{int(self.target_seconds)}s_{self.id[:8]}.m4a"
+        self.set(progress=0.85, message="Cutting segment with fades…")
+        cut = cut_segment(source_audio, segment_path, choice, FFMPEG)
+        if cut.returncode != 0:
+            self.fail("ffmpeg_failed", f"Segment cut failed: {(cut.stderr or '')[-300:]}")
+            return
+
+        self._check_cancel()
+        self.set(state="verifying", progress=0.95, message="Verifying segment…")
+        probe = self._run_subprocess([FFPROBE, "-v", "error", "-print_format", "json",
+                                      "-show_format", str(segment_path)])
+        if probe is None:
+            raise CancelledError()
+        try:
+            seg_duration = float(json.loads(probe.stdout)["format"]["duration"])
+        except (KeyError, ValueError, json.JSONDecodeError):
+            self.fail("ffmpeg_failed", "Segment verification failed.")
+            return
+        if abs(seg_duration - self.target_seconds) > 0.5:
+            self.fail("ffmpeg_failed",
+                      f"Segment duration {seg_duration:.2f}s does not match "
+                      f"the requested {self.target_seconds}s.")
+            return
+
+        self.set(state="done", progress=1.0,
+                 message=f"Segment ready: {choice.start:.1f}s–{choice.end:.1f}s "
+                         f"({analysis['tempo_bpm']:.0f} BPM).",
+                 audio_path=str(segment_path),
+                 audio_duration=seg_duration,
+                 audio_format="aac",
+                 result={
+                     "tempo_bpm": round(analysis["tempo_bpm"], 1),
+                     "track_duration": round(analysis["duration"], 2),
+                     "beat_count": len(analysis["beats"]),
+                     "section_count": len(analysis["sections"]),
+                     "segment_start": choice.start,
+                     "segment_end": choice.end,
+                     "score": round(choice.score, 4),
+                     "reasons": choice.reasons,
+                 })
+
     def _run_subprocess(self, cmd):
         """Run a tool with list args (never a shell); poll for cancellation."""
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -436,20 +536,56 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
         if self.path == "/jobs":
             body = self._read_json_body()
-            if body is None or "url" not in body:
+            if body is None:
                 self._send_json(400, {"error_code": "invalid_url",
-                                      "message": "Request must be JSON with a 'url' field."})
+                                      "message": "Request must be a JSON object."})
                 return
-            if body.get("authorized") is not True:
-                self._send_json(403, {"error_code": "not_authorized",
-                                      "message": "Authorization acknowledgement is required."})
+
+            kind = body.get("kind", "download")
+            if kind == "analyze":
+                source_id = body.get("source_job_id", "")
+                if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
+                    self._send_json(400, {"error_code": "not_found",
+                                          "message": "A valid 'source_job_id' is required."})
+                    return
+                try:
+                    target = float(body.get("target_seconds", 0))
+                except (TypeError, ValueError):
+                    target = 0
+                if not 10 <= target <= 120:
+                    self._send_json(400, {"error_code": "invalid_request",
+                                          "message": "'target_seconds' must be between 10 and 120."})
+                    return
+                override = body.get("start_override")
+                if override is not None:
+                    try:
+                        override = max(0.0, float(override))
+                    except (TypeError, ValueError):
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": "'start_override' must be a number."})
+                        return
+                job = Job(kind="analyze", source_job_id=source_id,
+                          target_seconds=target, start_override=override)
+            elif kind == "download":
+                if "url" not in body:
+                    self._send_json(400, {"error_code": "invalid_url",
+                                          "message": "Request must include a 'url' field."})
+                    return
+                if body.get("authorized") is not True:
+                    self._send_json(403, {"error_code": "not_authorized",
+                                          "message": "Authorization acknowledgement is required."})
+                    return
+                video_id = validate_youtube_url(body["url"])
+                if video_id is None:
+                    self._send_json(400, {"error_code": "invalid_url",
+                                          "message": "Not a valid YouTube URL."})
+                    return
+                job = Job(url=body["url"], video_id=video_id)
+            else:
+                self._send_json(400, {"error_code": "invalid_request",
+                                      "message": f"Unknown job kind: {kind!r}."})
                 return
-            video_id = validate_youtube_url(body["url"])
-            if video_id is None:
-                self._send_json(400, {"error_code": "invalid_url",
-                                      "message": "Not a valid YouTube URL."})
-                return
-            job = Job(body["url"], video_id)
+
             with JOBS_LOCK:
                 JOBS[job.id] = job
             threading.Thread(target=job.run, daemon=True, name=f"job-{job.id}").start()

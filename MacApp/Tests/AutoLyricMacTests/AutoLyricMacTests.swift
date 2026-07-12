@@ -91,6 +91,36 @@ final class MetadataParsingTests: XCTestCase {
         XCTAssertEqual(status.audioDuration, 212.0)
     }
 
+    func testAnalysisJobParsing() throws {
+        let json = """
+        {"job_id": "abc", "kind": "analyze", "state": "done", "progress": 1.0,
+         "message": "Segment ready", "error_code": null,
+         "audio_path": "/tmp/segment_45s.m4a", "audio_duration": 45.0,
+         "audio_format": "aac",
+         "result": {"tempo_bpm": 136.0, "track_duration": 634.6,
+                    "beat_count": 1378, "section_count": 12,
+                    "segment_start": 484.3, "segment_end": 529.3,
+                    "score": 0.67, "reasons": ["r1", "r2"]}}
+        """
+        let status = try decoder.decode(JobStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.kind, "analyze")
+        XCTAssertEqual(status.result?.tempoBpm, 136.0)
+        XCTAssertEqual(status.result?.reasons.count, 2)
+        XCTAssertEqual(status.result?.segmentStart, 484.3)
+    }
+
+    func testDownloadJobParsesWithoutResult() throws {
+        let json = """
+        {"job_id": "abc", "state": "downloading", "progress": 0.4,
+         "message": "Downloading", "error_code": null, "audio_path": null,
+         "audio_duration": null, "audio_format": null}
+        """
+        let status = try decoder.decode(JobStatus.self, from: Data(json.utf8))
+        XCTAssertNil(status.result)
+        XCTAssertNil(status.kind)
+        XCTAssertFalse(status.isTerminal)
+    }
+
     func testErrorPayloadParsing() throws {
         let json = """
         {"error_code": "restricted", "message": "This video is age-restricted."}

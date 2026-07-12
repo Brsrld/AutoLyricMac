@@ -53,16 +53,30 @@ struct SourceMetadata: Decodable, Equatable {
     let originalUrl: String?
 }
 
-/// Status of an audio-ingestion job.
+/// Result payload of an analysis job (Phase 2).
+struct AnalysisResult: Decodable, Equatable {
+    let tempoBpm: Double
+    let trackDuration: Double
+    let beatCount: Int
+    let sectionCount: Int
+    let segmentStart: Double
+    let segmentEnd: Double
+    let score: Double
+    let reasons: [String]
+}
+
+/// Status of an engine job (audio ingestion or analysis).
 struct JobStatus: Decodable, Equatable {
     let jobId: String
-    let state: String       // queued|downloading|converting|verifying|done|error|cancelled
+    let kind: String?
+    let state: String       // queued|downloading|converting|analyzing|verifying|done|error|cancelled
     let progress: Double
     let message: String
     let errorCode: String?
     let audioPath: String?
     let audioDuration: Double?
     let audioFormat: String?
+    let result: AnalysisResult?
 
     var isTerminal: Bool { ["done", "error", "cancelled"].contains(state) }
 }
@@ -149,6 +163,20 @@ final class EngineClient: ObservableObject {
         let created: Created = try await post(path: "jobs",
                                               body: ["url": url, "authorized": authorized],
                                               timeout: 15)
+        return created.jobId
+    }
+
+    /// Start an analysis + segment-selection job on an ingested job's audio.
+    func createAnalyzeJob(sourceJobId: String, targetSeconds: Int,
+                          startOverride: Double?) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        var body: [String: Any] = ["kind": "analyze",
+                                   "source_job_id": sourceJobId,
+                                   "target_seconds": targetSeconds]
+        if let startOverride {
+            body["start_override"] = startOverride
+        }
+        let created: Created = try await post(path: "jobs", body: body, timeout: 15)
         return created.jobId
     }
 

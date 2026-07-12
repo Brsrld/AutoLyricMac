@@ -29,6 +29,12 @@ struct ContentView: View {
     @State private var previewPlayer: AVAudioPlayer?
     @State private var isPreviewPlaying = false
 
+    // Segment analysis (Phase 2)
+    @State private var analysisJob: JobStatus?
+    @State private var analysisTask: Task<Void, Never>?
+    @State private var analysisError: String?
+    @State private var startOverrideText: String = ""
+
     private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
@@ -71,6 +77,11 @@ struct ContentView: View {
                 Divider()
 
                 downloadTestSection
+
+                if activeJob?.state == "done" {
+                    Divider()
+                    segmentSection
+                }
 
                 Divider()
 
@@ -270,6 +281,66 @@ struct ContentView: View {
         }
     }
 
+    private var analysisIsRunning: Bool {
+        if let job = analysisJob { return !job.isTerminal }
+        return analysisTask != nil && analysisJob == nil
+    }
+
+    private var segmentSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Segment Selection")
+                .font(.headline)
+            HStack(spacing: 12) {
+                Button("Analyze & Select \(durationSeconds)s Segment") { startAnalysis() }
+                    .disabled(engine.status != .connected || analysisIsRunning)
+                if analysisIsRunning {
+                    Button("Cancel", role: .cancel) { cancelAnalysis() }
+                }
+                TextField("Start override (s, optional)", text: $startOverrideText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 190)
+            }
+
+            if let job = analysisJob {
+                if !job.isTerminal {
+                    ProgressView(value: job.progress)
+                }
+                Label(job.message, systemImage: iconForJobState(job.state))
+                    .font(.callout)
+                    .foregroundStyle(job.state == "error" ? .red : .primary)
+
+                if job.state == "done", let result = job.result, let path = job.audioPath {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 12) {
+                            Button {
+                                togglePreview(path: path)
+                            } label: {
+                                Label(isPreviewPlaying ? "Pause Segment" : "Play Segment",
+                                      systemImage: isPreviewPlaying ? "pause.fill" : "play.fill")
+                            }
+                            .controlSize(.small)
+                            Text("\(Int(result.tempoBpm)) BPM  •  \(Self.formatDuration(result.segmentStart))–\(Self.formatDuration(result.segmentEnd)) of \(Self.formatDuration(result.trackDuration))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(result.reasons, id: \.self) { reason in
+                            Text("• \(reason)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(10)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if let error = analysisError {
+                Label(error, systemImage: "xmark.octagon")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
     private var logSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Activity")
@@ -326,6 +397,8 @@ struct ContentView: View {
         inspectTask?.cancel()
         activeJob = nil
         jobError = nil
+        analysisJob = nil
+        analysisError = nil
 
         guard urlIsValid else {
             inspectState = .idle
@@ -358,6 +431,8 @@ struct ContentView: View {
     private func startDownloadTest() {
         jobError = nil
         activeJob = nil
+        analysisJob = nil
+        analysisError = nil
         stopPreview()
         let url = youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines)
         jobTask = Task {
@@ -381,6 +456,54 @@ struct ContentView: View {
                 AppLog.shared.append("Job failed: lost contact with the engine.")
             }
             jobTask = nil
+        }
+    }
+
+    private func startAnalysis() {
+        guard let source = activeJob, source.state == "done" else { return }
+        analysisError = nil
+        analysisJob = nil
+        stopPreview()
+        let override = Double(startOverrideText.replacingOccurrences(of: ",", with: ".")
+                                .trimmingCharacters(in: .whitespaces))
+        if !startOverrideText.trimmingCharacters(in: .whitespaces).isEmpty && override == nil {
+            analysisError = "Start override must be a number of seconds."
+            return
+        }
+        analysisTask = Task {
+            do {
+                let jobId = try await engine.createAnalyzeJob(
+                    sourceJobId: source.jobId,
+                    targetSeconds: durationSeconds,
+                    startOverride: override)
+                AppLog.shared.append("Analysis job \(jobId.prefix(8)) started (\(durationSeconds)s).")
+                while !Task.isCancelled {
+                    let status = try await engine.jobStatus(id: jobId)
+                    analysisJob = status
+                    if status.isTerminal {
+                        AppLog.shared.append("Analysis \(jobId.prefix(8)) \(status.state): \(status.message)")
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+            } catch let error as EngineAPIError {
+                analysisError = error.errorDescription
+                AppLog.shared.append("Analysis failed: \(error.errorDescription ?? "unknown error")")
+            } catch {
+                analysisError = "Lost contact with the local engine: \(error.localizedDescription)"
+            }
+            analysisTask = nil
+        }
+    }
+
+    private func cancelAnalysis() {
+        guard let job = analysisJob, !job.isTerminal else {
+            analysisTask?.cancel()
+            analysisTask = nil
+            return
+        }
+        Task {
+            try? await engine.cancelJob(id: job.jobId)
         }
     }
 
