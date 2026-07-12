@@ -53,16 +53,89 @@ struct SourceMetadata: Decodable, Equatable {
     let originalUrl: String?
 }
 
-/// Result payload of an analysis job (Phase 2).
-struct AnalysisResult: Decodable, Equatable {
-    let tempoBpm: Double
-    let trackDuration: Double
-    let beatCount: Int
-    let sectionCount: Int
-    let segmentStart: Double
-    let segmentEnd: Double
-    let score: Double
-    let reasons: [String]
+/// Splits a YouTube title like "Artist - Song (Official Video)" into an
+/// artist/title guess for lyric search; falls back to the uploader.
+enum SongTitleParser {
+    static func guess(title: String?, uploader: String?) -> (artist: String, title: String) {
+        let raw = (title ?? "").trimmingCharacters(in: .whitespaces)
+        let channel = (uploader ?? "")
+            .replacingOccurrences(of: " - Topic", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        for separator in [" - ", " – ", " — ", " | "] {
+            if let range = raw.range(of: separator) {
+                let artist = String(raw[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+                let song = String(raw[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !artist.isEmpty && !song.isEmpty {
+                    return (artist, song)
+                }
+            }
+        }
+        return (channel, raw)
+    }
+}
+
+/// Result payload of a terminal job. Different job kinds fill different
+/// fields, so everything is optional and decoding stays tolerant.
+struct JobResult: Decodable, Equatable {
+    // analyze (Phase 2)
+    let tempoBpm: Double?
+    let trackDuration: Double?
+    let beatCount: Int?
+    let sectionCount: Int?
+    let segmentStart: Double?
+    let segmentEnd: Double?
+    let score: Double?
+    let reasons: [String]?
+    // lyrics (Phase 3)
+    let lineCount: Int?
+    let synced: Bool?
+    // align (Phase 3)
+    let matchedRatio: Double?
+    let meanConfidence: Double?
+    let uncertainLines: Int?
+    let suspect: Bool?
+    // subtitle preview (Phase 3)
+    let outputPath: String?
+    let qaFrames: [String]?
+    let style: String?
+}
+
+/// One word of a lyric line with aligned timing and confidence.
+struct LyricWordPayload: Decodable, Equatable {
+    let text: String
+    let start: Double?
+    let end: Double?
+    let confidence: Double?
+}
+
+/// One canonical lyric line, including user corrections and translation.
+struct LyricLinePayload: Decodable, Equatable, Identifiable {
+    let lineIndex: Int
+    let text: String
+    let correctedText: String?
+    let displayText: String
+    let translation: String?
+    let start: Double?
+    let end: Double?
+    let confidence: Double?
+    let uncertain: Bool
+    let words: [LyricWordPayload]
+
+    var id: Int { lineIndex }
+}
+
+/// Full lyrics payload for a job from GET /lyrics/<job_id>.
+struct LyricsPayload: Decodable, Equatable {
+    let jobId: String
+    let provider: String
+    let artist: String?
+    let title: String?
+    let synced: Bool
+    let aligned: Bool
+    let matchedRatio: Double?
+    let meanConfidence: Double?
+    let suspect: Bool
+    let lines: [LyricLinePayload]
 }
 
 /// Status of an engine job (audio ingestion or analysis).
@@ -76,7 +149,7 @@ struct JobStatus: Decodable, Equatable {
     let audioPath: String?
     let audioDuration: Double?
     let audioFormat: String?
-    let result: AnalysisResult?
+    let result: JobResult?
 
     var isTerminal: Bool { ["done", "error", "cancelled"].contains(state) }
 }
@@ -178,6 +251,60 @@ final class EngineClient: ObservableObject {
         }
         let created: Created = try await post(path: "jobs", body: body, timeout: 15)
         return created.jobId
+    }
+
+    /// Start a lyrics search job for an ingested job's song.
+    func createLyricsJob(sourceJobId: String, artist: String, title: String) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "lyrics",
+                                                     "source_job_id": sourceJobId,
+                                                     "artist": artist,
+                                                     "title": title],
+                                              timeout: 15)
+        return created.jobId
+    }
+
+    /// Start a word-alignment job (local Whisper) for stored lyrics.
+    func createAlignJob(sourceJobId: String) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "align",
+                                                     "source_job_id": sourceJobId],
+                                              timeout: 15)
+        return created.jobId
+    }
+
+    /// Render a subtitle preview for a style over the selected segment.
+    func createSubtitlePreviewJob(sourceJobId: String, style: String,
+                                  segmentStart: Double, targetSeconds: Int) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "subtitle_preview",
+                                                     "source_job_id": sourceJobId,
+                                                     "style": style,
+                                                     "segment_start": segmentStart,
+                                                     "target_seconds": targetSeconds],
+                                              timeout: 15)
+        return created.jobId
+    }
+
+    /// Fetch stored lyrics (lines, timing, confidence) for an ingested job.
+    func fetchLyrics(sourceJobId: String) async throws -> LyricsPayload {
+        var request = URLRequest(url: baseURL.appendingPathComponent("lyrics/\(sourceJobId)"))
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try Self.decode(data: data, response: response)
+    }
+
+    /// Persist a user correction and/or Turkish translation for one line.
+    /// Pass an empty string to clear; nil leaves the field unchanged.
+    func updateLyricLine(sourceJobId: String, lineIndex: Int,
+                         correctedText: String?, translation: String?) async throws -> LyricLinePayload {
+        var body: [String: Any] = ["line_index": lineIndex]
+        if let correctedText { body["corrected_text"] = correctedText }
+        if let translation { body["translation"] = translation }
+        return try await post(path: "lyrics/\(sourceJobId)/line", body: body, timeout: 10)
     }
 
     func jobStatus(id: String) async throws -> JobStatus {

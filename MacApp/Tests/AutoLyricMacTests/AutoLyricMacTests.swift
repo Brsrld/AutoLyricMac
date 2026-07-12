@@ -91,6 +91,48 @@ final class MetadataParsingTests: XCTestCase {
         XCTAssertEqual(status.audioDuration, 212.0)
     }
 
+    func testLyricsJobResultParsing() throws {
+        let json = """
+        {"job_id": "abc", "kind": "align", "state": "done", "progress": 1.0,
+         "message": "Alignment done", "error_code": null, "audio_path": null,
+         "audio_duration": null, "audio_format": null,
+         "result": {"matched_ratio": 0.83, "mean_confidence": 0.81,
+                    "uncertain_lines": 1, "suspect": false,
+                    "asr_word_count": 25}}
+        """
+        let status = try decoder.decode(JobStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.result?.matchedRatio, 0.83)
+        XCTAssertEqual(status.result?.uncertainLines, 1)
+        XCTAssertEqual(status.result?.suspect, false)
+        XCTAssertNil(status.result?.tempoBpm)
+    }
+
+    func testLyricsPayloadParsing() throws {
+        let json = """
+        {"job_id": "deadbeef", "provider": "lrclib", "artist": "A", "title": "T",
+         "album": null, "synced": true, "score": 0.9, "aligned": true,
+         "matched_ratio": 0.83, "mean_confidence": 0.81, "suspect": false,
+         "lines": [
+           {"line_index": 0, "text": "Hold me close", "corrected_text": null,
+            "display_text": "Hold me close", "translation": "Beni tut",
+            "start": 1.5, "end": 3.4, "confidence": 0.97, "uncertain": false,
+            "words": [{"text": "Hold", "start": 1.5, "end": 1.8,
+                       "confidence": 0.99}]},
+           {"line_index": 1, "text": "Never sung", "corrected_text": "Fixed",
+            "display_text": "Fixed", "translation": null, "start": null,
+            "end": null, "confidence": 0.0, "uncertain": true, "words": []}
+         ]}
+        """
+        let payload = try decoder.decode(LyricsPayload.self, from: Data(json.utf8))
+        XCTAssertTrue(payload.aligned)
+        XCTAssertFalse(payload.suspect)
+        XCTAssertEqual(payload.lines.count, 2)
+        XCTAssertEqual(payload.lines[0].words.first?.text, "Hold")
+        XCTAssertEqual(payload.lines[1].displayText, "Fixed")
+        XCTAssertTrue(payload.lines[1].uncertain)
+        XCTAssertNil(payload.lines[1].start)
+    }
+
     func testAnalysisJobParsing() throws {
         let json = """
         {"job_id": "abc", "kind": "analyze", "state": "done", "progress": 1.0,
@@ -105,7 +147,7 @@ final class MetadataParsingTests: XCTestCase {
         let status = try decoder.decode(JobStatus.self, from: Data(json.utf8))
         XCTAssertEqual(status.kind, "analyze")
         XCTAssertEqual(status.result?.tempoBpm, 136.0)
-        XCTAssertEqual(status.result?.reasons.count, 2)
+        XCTAssertEqual(status.result?.reasons?.count, 2)
         XCTAssertEqual(status.result?.segmentStart, 484.3)
     }
 
@@ -128,6 +170,33 @@ final class MetadataParsingTests: XCTestCase {
         let error = try decoder.decode(EngineAPIError.self, from: Data(json.utf8))
         XCTAssertEqual(error.errorCode, "restricted")
         XCTAssertEqual(error.errorDescription, "This video is age-restricted.")
+    }
+}
+
+final class SongTitleParserTests: XCTestCase {
+    func testArtistDashTitle() {
+        let g = SongTitleParser.guess(title: "Sezen Aksu - Gidiyorum (Official Video)",
+                                      uploader: "SomeChannel")
+        XCTAssertEqual(g.artist, "Sezen Aksu")
+        XCTAssertEqual(g.title, "Gidiyorum (Official Video)")
+    }
+
+    func testFallsBackToUploader() {
+        let g = SongTitleParser.guess(title: "Gidiyorum", uploader: "Sezen Aksu - Topic")
+        XCTAssertEqual(g.artist, "Sezen Aksu")
+        XCTAssertEqual(g.title, "Gidiyorum")
+    }
+
+    func testEnDashSeparator() {
+        let g = SongTitleParser.guess(title: "Artist – Song", uploader: nil)
+        XCTAssertEqual(g.artist, "Artist")
+        XCTAssertEqual(g.title, "Song")
+    }
+
+    func testEmptyInputs() {
+        let g = SongTitleParser.guess(title: nil, uploader: nil)
+        XCTAssertEqual(g.artist, "")
+        XCTAssertEqual(g.title, "")
     }
 }
 

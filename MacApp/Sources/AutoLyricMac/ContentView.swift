@@ -35,6 +35,18 @@ struct ContentView: View {
     @State private var analysisError: String?
     @State private var startOverrideText: String = ""
 
+    // Lyrics & synchronization (Phase 3)
+    @State private var lyricArtist: String = ""
+    @State private var lyricTitle: String = ""
+    @State private var lyricsJob: JobStatus?
+    @State private var lyricsTask: Task<Void, Never>?
+    @State private var lyricsError: String?
+    @State private var lyrics: LyricsPayload?
+    @State private var editingLine: Int?
+    @State private var correctionDraft: String = ""
+    @State private var translationDraft: String = ""
+    @State private var previewStyle: String = "archiveCollage"
+
     private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
@@ -81,6 +93,8 @@ struct ContentView: View {
                 if activeJob?.state == "done" {
                     Divider()
                     segmentSection
+                    Divider()
+                    lyricsSection
                 }
 
                 Divider()
@@ -319,11 +333,11 @@ struct ContentView: View {
                                       systemImage: isPreviewPlaying ? "pause.fill" : "play.fill")
                             }
                             .controlSize(.small)
-                            Text("\(Int(result.tempoBpm)) BPM  •  \(Self.formatDuration(result.segmentStart))–\(Self.formatDuration(result.segmentEnd)) of \(Self.formatDuration(result.trackDuration))")
+                            Text("\(Int(result.tempoBpm ?? 0)) BPM  •  \(Self.formatDuration(result.segmentStart ?? 0))–\(Self.formatDuration(result.segmentEnd ?? 0)) of \(Self.formatDuration(result.trackDuration ?? 0))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        ForEach(result.reasons, id: \.self) { reason in
+                        ForEach(result.reasons ?? [], id: \.self) { reason in
                             Text("• \(reason)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -337,6 +351,208 @@ struct ContentView: View {
                 Label(error, systemImage: "xmark.octagon")
                     .font(.callout)
                     .foregroundStyle(.red)
+            }
+        }
+    }
+
+    // MARK: - Lyrics & sync (Phase 3)
+
+    private var lyricsJobRunning: Bool {
+        if let job = lyricsJob { return !job.isTerminal }
+        return lyricsTask != nil && lyricsJob == nil
+    }
+
+    private var lyricsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Lyrics & Sync")
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                TextField("Artist", text: $lyricArtist)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                TextField("Song title", text: $lyricTitle)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack(spacing: 12) {
+                Button("Fetch Lyrics") { startLyricsFetch() }
+                    .disabled(engine.status != .connected || lyricsJobRunning
+                              || lyricTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Align Words") { startAlign() }
+                    .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
+                if lyricsJobRunning {
+                    Button("Cancel", role: .cancel) { cancelLyricsJob() }
+                }
+            }
+
+            if let job = lyricsJob {
+                if !job.isTerminal {
+                    ProgressView(value: job.progress)
+                }
+                Label(job.message, systemImage: iconForJobState(job.state))
+                    .font(.callout)
+                    .foregroundStyle(job.state == "error" ? .red : .primary)
+            }
+            if let error = lyricsError {
+                Label(error, systemImage: "xmark.octagon")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            if let lyrics {
+                lyricsDetail(lyrics)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lyricsDetail(_ payload: LyricsPayload) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if payload.suspect {
+                Label("These lyrics may not match this recording. Review them or try a local .lrc/.txt file.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            HStack(spacing: 12) {
+                Text("\(payload.lines.count) lines  •  \(payload.provider)  •  \(payload.synced ? "synced" : "plain")")
+                if payload.aligned, let ratio = payload.matchedRatio {
+                    Text("aligned: \(Int(ratio * 100))% words matched")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(payload.lines) { line in
+                    lyricLineRow(line)
+                }
+            }
+            .padding(8)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+
+            subtitlePreviewControls
+        }
+    }
+
+    private func confidenceColor(_ line: LyricLinePayload) -> Color {
+        guard let confidence = line.confidence else { return .gray }
+        if confidence >= 0.8 { return .green }
+        if confidence >= 0.55 { return .yellow }
+        return .red
+    }
+
+    @ViewBuilder
+    private func lyricLineRow(_ line: LyricLinePayload) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(confidenceColor(line))
+                    .frame(width: 8, height: 8)
+                    .help(line.confidence.map { "Confidence \(Int($0 * 100))%" }
+                          ?? "Not aligned yet")
+                if let start = line.start, let end = line.end {
+                    Text("\(Self.formatDuration(start))–\(Self.formatDuration(end))")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 86, alignment: .leading)
+                } else {
+                    Text("—")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 86, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(line.displayText)
+                            .font(.callout)
+                        if line.uncertain {
+                            Image(systemName: "questionmark.circle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.caption)
+                                .help("Low confidence — check this line")
+                        }
+                        if line.correctedText != nil {
+                            Image(systemName: "pencil.circle.fill")
+                                .foregroundStyle(.blue)
+                                .font(.caption)
+                                .help("Edited by you")
+                        }
+                    }
+                    if let translation = line.translation, !translation.isEmpty {
+                        Text(translation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button {
+                    beginEditing(line)
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Edit text / Turkish translation")
+            }
+            if editingLine == line.lineIndex {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Corrected lyric (empty = original)", text: $correctionDraft)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Turkish translation (optional)", text: $translationDraft)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("Save") { saveLineEdit(line.lineIndex) }
+                            .controlSize(.small)
+                        Button("Cancel") { editingLine = nil }
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.leading, 24)
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var subtitlePreviewControls: some View {
+        let aligned = lyrics?.aligned == true
+        let haveSegment = analysisJob?.state == "done"
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Style", selection: $previewStyle) {
+                    Text("Archive Collage").tag("archiveCollage")
+                    Text("Doodle Memory").tag("doodleMemory")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 300)
+                Button("Render Subtitle Preview") { startSubtitlePreview() }
+                    .disabled(engine.status != .connected || lyricsJobRunning
+                              || !aligned || !haveSegment)
+            }
+            if !aligned || !haveSegment {
+                Text("Requires aligned lyrics and a selected segment.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if lyricsJob?.kind == "subtitle_preview", lyricsJob?.state == "done",
+               let path = lyricsJob?.result?.outputPath {
+                HStack(spacing: 12) {
+                    Button {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    } label: {
+                        Label("Open Preview", systemImage: "play.rectangle")
+                    }
+                    .controlSize(.small)
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: path)])
+                    }
+                    .controlSize(.small)
+                }
             }
         }
     }
@@ -414,6 +630,9 @@ struct ContentView: View {
                 let meta = try await engine.inspect(url: url)
                 guard !Task.isCancelled else { return }
                 inspectState = .loaded(meta)
+                let guess = SongTitleParser.guess(title: meta.title, uploader: meta.uploader)
+                lyricArtist = guess.artist
+                lyricTitle = guess.title
                 AppLog.shared.append("Metadata loaded: \(meta.title ?? "untitled") (\(meta.videoId ?? "?"))")
             } catch let error as EngineAPIError {
                 guard !Task.isCancelled else { return }
@@ -433,6 +652,10 @@ struct ContentView: View {
         activeJob = nil
         analysisJob = nil
         analysisError = nil
+        lyricsJob = nil
+        lyricsError = nil
+        lyrics = nil
+        editingLine = nil
         stopPreview()
         let url = youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines)
         jobTask = Task {
@@ -504,6 +727,115 @@ struct ContentView: View {
         }
         Task {
             try? await engine.cancelJob(id: job.jobId)
+        }
+    }
+
+    // MARK: - Lyrics actions
+
+    private func runLyricsJob(_ description: String,
+                              create: @escaping () async throws -> String,
+                              onDone: @escaping (JobStatus) async -> Void) {
+        lyricsError = nil
+        lyricsJob = nil
+        lyricsTask = Task {
+            do {
+                let jobId = try await create()
+                AppLog.shared.append("\(description) job \(jobId.prefix(8)) started.")
+                while !Task.isCancelled {
+                    let status = try await engine.jobStatus(id: jobId)
+                    lyricsJob = status
+                    if status.isTerminal {
+                        AppLog.shared.append("\(description) \(status.state): \(status.message)")
+                        if status.state == "done" {
+                            await onDone(status)
+                        }
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+            } catch let error as EngineAPIError {
+                lyricsError = error.errorDescription
+                AppLog.shared.append("\(description) failed: \(error.errorDescription ?? "unknown error")")
+            } catch {
+                lyricsError = "Lost contact with the local engine: \(error.localizedDescription)"
+            }
+            lyricsTask = nil
+        }
+    }
+
+    private func refreshLyrics() async {
+        guard let source = activeJob, source.state == "done" else { return }
+        lyrics = try? await engine.fetchLyrics(sourceJobId: source.jobId)
+    }
+
+    private func startLyricsFetch() {
+        guard let source = activeJob, source.state == "done" else { return }
+        editingLine = nil
+        runLyricsJob("Lyrics search",
+                     create: {
+                         try await engine.createLyricsJob(
+                             sourceJobId: source.jobId,
+                             artist: lyricArtist.trimmingCharacters(in: .whitespaces),
+                             title: lyricTitle.trimmingCharacters(in: .whitespaces))
+                     },
+                     onDone: { _ in await refreshLyrics() })
+    }
+
+    private func startAlign() {
+        guard let source = activeJob, source.state == "done" else { return }
+        runLyricsJob("Alignment",
+                     create: { try await engine.createAlignJob(sourceJobId: source.jobId) },
+                     onDone: { _ in await refreshLyrics() })
+    }
+
+    private func startSubtitlePreview() {
+        guard let source = activeJob, source.state == "done" else { return }
+        let segmentStart = analysisJob?.result?.segmentStart ?? 0
+        runLyricsJob("Subtitle preview (\(previewStyle))",
+                     create: {
+                         try await engine.createSubtitlePreviewJob(
+                             sourceJobId: source.jobId,
+                             style: previewStyle,
+                             segmentStart: segmentStart,
+                             targetSeconds: durationSeconds)
+                     },
+                     onDone: { _ in })
+    }
+
+    private func cancelLyricsJob() {
+        guard let job = lyricsJob, !job.isTerminal else {
+            lyricsTask?.cancel()
+            lyricsTask = nil
+            return
+        }
+        Task {
+            try? await engine.cancelJob(id: job.jobId)
+        }
+    }
+
+    private func beginEditing(_ line: LyricLinePayload) {
+        editingLine = line.lineIndex
+        correctionDraft = line.correctedText ?? line.text
+        translationDraft = line.translation ?? ""
+    }
+
+    private func saveLineEdit(_ lineIndex: Int) {
+        guard let source = activeJob, source.state == "done" else { return }
+        let original = lyrics?.lines.first(where: { $0.lineIndex == lineIndex })?.text
+        let correction = correctionDraft.trimmingCharacters(in: .whitespaces)
+        Task {
+            do {
+                _ = try await engine.updateLyricLine(
+                    sourceJobId: source.jobId,
+                    lineIndex: lineIndex,
+                    correctedText: correction == original ? "" : correction,
+                    translation: translationDraft.trimmingCharacters(in: .whitespaces))
+                editingLine = nil
+                await refreshLyrics()
+                AppLog.shared.append("Lyric line \(lineIndex + 1) saved.")
+            } catch {
+                lyricsError = "Could not save the line: \(error.localizedDescription)"
+            }
         }
     }
 
