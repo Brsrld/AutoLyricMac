@@ -93,6 +93,7 @@ final class EngineManager: ObservableObject {
     private func startWithRetry() async {
         guard let env = EngineEnvironment.locate() else {
             state = .failed("Could not locate the repository root (Engine/engine.py).")
+            AppLog.shared.append("Engine start failed: repository root not found.")
             return
         }
         guard FileManager.default.fileExists(atPath: env.venvPython.path) else {
@@ -103,25 +104,31 @@ final class EngineManager: ObservableObject {
         // If a previous engine instance is already healthy (e.g. relaunch), adopt it.
         if await probeHealth() {
             state = .running
+            AppLog.shared.append("Adopted an already-running engine on 127.0.0.1:\(port).")
             return
         }
 
         policy.reset()
         while policy.beginAttempt() {
             state = .starting
+            AppLog.shared.append("Starting engine (attempt \(policy.attemptsMade)/\(policy.maxAttempts))…")
             do {
                 try launchProcess(env: env)
             } catch {
+                AppLog.shared.append("Engine launch error: \(error.localizedDescription)")
                 terminateProcess()
                 continue
             }
             if await waitForHealth(timeout: 15) {
                 state = .running
+                AppLog.shared.append("Engine healthy on 127.0.0.1:\(port).")
                 return
             }
+            AppLog.shared.append("Engine did not become healthy in time; stopping it.")
             terminateProcess()
         }
         state = .failed("Engine failed to start after \(policy.maxAttempts) attempts. See Logs/engine.log.")
+        AppLog.shared.append("Engine failed to start after \(policy.maxAttempts) attempts.")
     }
 
     private func launchProcess(env: EngineEnvironment) throws {
@@ -148,6 +155,7 @@ final class EngineManager: ObservableObject {
                 self.process = nil
                 if self.state == .running {
                     self.state = .failed("Engine exited unexpectedly. See Logs/engine.log.")
+                    AppLog.shared.append("Engine exited unexpectedly.")
                 }
             }
         }

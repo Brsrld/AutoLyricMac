@@ -1,8 +1,10 @@
+import AVFoundation
 import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var engineManager: EngineManager
     @StateObject private var engine = EngineClient()
+    @ObservedObject private var log = AppLog.shared
 
     @State private var youtubeURL: String = ""
     @State private var durationSeconds: Int = 30
@@ -22,6 +24,10 @@ struct ContentView: View {
     @State private var activeJob: JobStatus?
     @State private var jobTask: Task<Void, Never>?
     @State private var jobError: String?
+
+    // Audio preview of the ingested file
+    @State private var previewPlayer: AVAudioPlayer?
+    @State private var isPreviewPlaying = false
 
     private let durations = [30, 45, 60]
 
@@ -66,11 +72,15 @@ struct ContentView: View {
 
                 downloadTestSection
 
+                Divider()
+
+                logSection
+
                 Spacer(minLength: 0)
             }
             .padding(24)
         }
-        .frame(minWidth: 520, minHeight: 640)
+        .frame(minWidth: 520, minHeight: 720)
         .onAppear { engine.startPolling() }
         .onChange(of: youtubeURL) { _, _ in scheduleInspection() }
     }
@@ -215,7 +225,7 @@ struct ContentView: View {
                 .foregroundStyle(job.state == "error" ? .red : .primary)
 
             if job.state == "done", let path = job.audioPath {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text("Audio file:")
                             .font(.caption.weight(.semibold))
@@ -230,10 +240,19 @@ struct ContentView: View {
                         }
                         .controlSize(.small)
                     }
-                    if let duration = job.audioDuration {
-                        Text("Duration: \(Self.formatDuration(duration))  •  Format: \(job.audioFormat ?? "?")")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Button {
+                            togglePreview(path: path)
+                        } label: {
+                            Label(isPreviewPlaying ? "Pause Preview" : "Play Preview",
+                                  systemImage: isPreviewPlaying ? "pause.fill" : "play.fill")
+                        }
+                        .controlSize(.small)
+                        if let duration = job.audioDuration {
+                            Text("Duration: \(Self.formatDuration(duration))  •  Format: \(job.audioFormat ?? "?")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding(10)
@@ -251,7 +270,57 @@ struct ContentView: View {
         }
     }
 
+    private var logSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Activity")
+                .font(.headline)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(log.lines.enumerated()), id: \.offset) { i, line in
+                            Text(line)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .id(i)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 110)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                .onChange(of: log.lines.count) { _, count in
+                    if count > 0 { proxy.scrollTo(count - 1, anchor: .bottom) }
+                }
+            }
+        }
+    }
+
     // MARK: - Actions
+
+    private func togglePreview(path: String) {
+        if let player = previewPlayer, isPreviewPlaying {
+            player.pause()
+            isPreviewPlaying = false
+            return
+        }
+        if previewPlayer?.url?.path != path {
+            previewPlayer = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+        }
+        guard let player = previewPlayer else {
+            AppLog.shared.append("Could not open audio preview: \(path)")
+            return
+        }
+        player.play()
+        isPreviewPlaying = true
+        AppLog.shared.append("Playing audio preview.")
+    }
+
+    private func stopPreview() {
+        previewPlayer?.stop()
+        previewPlayer = nil
+        isPreviewPlaying = false
+    }
 
     private func scheduleInspection() {
         inspectTask?.cancel()
@@ -272,9 +341,11 @@ struct ContentView: View {
                 let meta = try await engine.inspect(url: url)
                 guard !Task.isCancelled else { return }
                 inspectState = .loaded(meta)
+                AppLog.shared.append("Metadata loaded: \(meta.title ?? "untitled") (\(meta.videoId ?? "?"))")
             } catch let error as EngineAPIError {
                 guard !Task.isCancelled else { return }
                 inspectState = .failed(error.errorDescription ?? "Inspection failed.")
+                AppLog.shared.append("Inspection failed: \(error.errorDescription ?? "unknown error")")
             } catch is CancellationError {
                 // superseded by newer input
             } catch {
@@ -287,20 +358,27 @@ struct ContentView: View {
     private func startDownloadTest() {
         jobError = nil
         activeJob = nil
+        stopPreview()
         let url = youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines)
         jobTask = Task {
             do {
                 let jobId = try await engine.createJob(url: url, authorized: authorizationConfirmed)
+                AppLog.shared.append("Ingestion job \(jobId.prefix(8)) started.")
                 while !Task.isCancelled {
                     let status = try await engine.jobStatus(id: jobId)
                     activeJob = status
-                    if status.isTerminal { break }
+                    if status.isTerminal {
+                        AppLog.shared.append("Job \(jobId.prefix(8)) \(status.state): \(status.message)")
+                        break
+                    }
                     try? await Task.sleep(for: .milliseconds(500))
                 }
             } catch let error as EngineAPIError {
                 jobError = error.errorDescription
+                AppLog.shared.append("Job failed: \(error.errorDescription ?? "unknown error")")
             } catch {
                 jobError = "Lost contact with the local engine: \(error.localizedDescription)"
+                AppLog.shared.append("Job failed: lost contact with the engine.")
             }
             jobTask = nil
         }
