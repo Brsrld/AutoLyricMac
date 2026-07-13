@@ -1064,11 +1064,46 @@ class Job:
                 scene["media"] = None
         dest_dir = MEDIA_CACHE_DIR / self.source_job_id
         scenes = plan["scenes"]
+        # Doodle Memory scenes are DRAWN, not photographed: generate a
+        # doodle-style illustration per scene (cached by prompt) and skip
+        # stock search entirely when a fal key is available.
+        draw_key = None
+        if plan.get("style") == "doodleMemory":
+            try:
+                from publish.youtube import Keychain
+                draw_key = Keychain().get("fal_api_key")
+            except Exception:
+                pass
         fetched, provider_errors, scene_errors = 0, [], []
         for i, scene in enumerate(scenes):
             if scene.get("media"):
                 fetched += 1     # already filled; only empty scenes fetch
                 continue
+            if draw_key:
+                self._check_cancel()
+                self.set(state="downloading",
+                         progress=0.05 + 0.9 * (i / max(1, len(scenes))),
+                         message=f"Drawing scene {i + 1}/{len(scenes)}…")
+                try:
+                    from media.genai import generate_image
+                    from media.crop import adaptation_plan as _ap
+                    scene["scene_index"] = scene.get("scene_index", i)
+                    cand, data = generate_image(scene, draw_key,
+                                                style="doodle")
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    gen_path = dest_dir / f"drawn_{i}.jpg"
+                    gen_path.write_bytes(data)
+                    store.record_asset(self.source_job_id, i, cand, gen_path)
+                    scene["media"] = {**cand.summary(),
+                                      "file_path": str(gen_path),
+                                      "adaptation": _ap(cand.width,
+                                                        cand.height,
+                                                        plan["style"])}
+                    fetched += 1
+                    continue
+                except Exception as exc:
+                    print(f"[engine] job {self.id} media: drawn scene {i} "
+                          f"failed ({exc}); falling back to stock", flush=True)
             self._check_cancel()
             self.set(state="downloading",
                      progress=0.05 + 0.9 * (i / max(1, len(scenes))),

@@ -108,8 +108,9 @@ def build_scene_background(scene, lut):
     strategy = (media.get("adaptation") or {}).get("strategy", "portrait_crop")
     frame = _adapted_full_frame(img, strategy, bw, bh)
 
-    # lively, colorful grade: boosted saturation and brightness with only a
-    # whisper of warmth — Doodle Memory is the cheerful, playful style
+    if media.get("provider") == "fal_ai":
+        return frame          # drawn scenes are already the final art
+
     # reference (wigglypaint) look: flat posterized color, warm and moody
     from PIL import ImageEnhance
     frame = ImageEnhance.Color(frame).enhance(1.08)
@@ -160,7 +161,8 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
 
     prepared = []      # per scene: doodle sprite + layout + subtitle stickers
     for i, scene in enumerate(scenes):
-        name = pick_doodle(scene.get("subjects"), i)
+        drawn = (scene.get("media") or {}).get("provider") == "fal_ai"
+        name = None if drawn else pick_doodle(scene.get("subjects"), i)
         if name is not None:   # doodles appear only when lyric-relevant
             layout = doodle_layout(i, name, is_ground_anchored(name))
             hpx = int(layout["height_frac"] * H)

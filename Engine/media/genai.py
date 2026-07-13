@@ -14,28 +14,37 @@ from .providers import MediaCandidate, MediaProviderError
 FAL_ENDPOINT = "https://fal.run/fal-ai/flux/schnell"
 
 
-def build_prompt(scene):
-    """Concrete cinematic prompt from the scene's queries/lyric/emotion."""
+def build_prompt(scene, style="photo"):
+    """Prompt from the scene's queries/lyric/emotion; two art directions."""
     query = (scene.get("queries") or ["cinematic scenery"])[0]
     emotion = scene.get("emotion", "")
     lyric = scene.get("lyric") or ""
     parts = [query]
-    if lyric:
+    if lyric and style != "doodle":   # lyric text makes FLUX draw words
         parts.append(f'inspired by the lyric "{lyric[:80]}"')
     if emotion and emotion != "neutral":
         parts.append(f"{emotion} mood")
-    parts.append("cinematic photography, vertical composition, natural "
-                 "light, no text, no watermark")
+    if style == "doodle":
+        parts.append("cute hand-drawn marker doodle illustration on warm "
+                     "cream paper, thick dark navy ink outlines, simple "
+                     "childlike rounded shapes, flat muted warm colors, "
+                     "wobbly hand-drawn lines, vertical composition, "
+                     "no photorealism, absolutely no text, no letters, no words, "
+                     "no typography, no signature, no watermark")
+    else:
+        parts.append("cinematic photography, vertical composition, natural "
+                     "light, no text, no watermark")
     return ", ".join(parts)
 
 
-def generate_image(scene, api_key, opener=urllib.request.urlopen):
+def generate_image(scene, api_key, opener=urllib.request.urlopen,
+                   style="photo"):
     """Generate one vertical image; returns (MediaCandidate, image_bytes).
 
     Results are cached by prompt in Cache/genai/ — the same prompt is never
     paid for twice (regenerates, replans and other songs reuse it free).
     """
-    prompt = build_prompt(scene)
+    prompt = build_prompt(scene, style)
     import sys as _sys
     from pathlib import Path as _P
     _sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
