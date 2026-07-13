@@ -9,6 +9,30 @@ so all logic is unit-testable without models.
 """
 
 
+_TR_CHARS = set("ğüşıöçĞÜŞİÖÇ")
+_TR_WORDS = {"bir", "ve", "bu", "ne", "gibi", "ben", "sen", "beni", "seni",
+             "bana", "sana", "ama", "çok", "yok", "var", "değil", "için",
+             "kadar", "daha", "gönül", "aşk", "sevda", "yar", "canım",
+             "ellerin", "gözlerin", "istemem", "olsun", "diye", "şimdi"}
+
+
+def looks_turkish(line_texts):
+    """Heuristic language check on the lyrics themselves (pure).
+
+    Whisper sometimes mislabels sung Turkish; if the text carries Turkish
+    letters or common Turkish words, treat the song as Turkish and add no
+    translation at all.
+    """
+    text = " ".join(line_texts).lower()
+    if not text.strip():
+        return False
+    char_hits = sum(1 for c in text if c in _TR_CHARS)
+    words = text.split()
+    word_hits = sum(1 for w in words if w.strip(".,!?'\"()") in _TR_WORDS)
+    return char_hits >= max(2, len(text) * 0.005) or \
+        (len(words) > 0 and word_hits / len(words) >= 0.08)
+
+
 def claude_translate_lines(lines, api_key, source_lang="auto"):
     """High-quality lyric translation via the Anthropic API (optional).
 

@@ -60,6 +60,16 @@ class TestFillMissingTranslations(unittest.TestCase):
         self.assertEqual(translated, 1)
         self.assertEqual(skipped, 2)
 
+    def test_looks_turkish_heuristic(self):
+        from lyrics.translate import looks_turkish
+        self.assertTrue(looks_turkish(["Şifa istemem balından",
+                                       "Gönlüm seni unutmaz"]))
+        self.assertTrue(looks_turkish(["ben sana bir sey diyecegim",
+                                       "ama sen bana gelme simdi"]))
+        self.assertFalse(looks_turkish(["I tried so hard and got so far",
+                                        "But in the end it does not matter"]))
+        self.assertFalse(looks_turkish([]))
+
     def test_missing_job_is_noop(self):
         translated, skipped = fill_missing_translations(
             self.store, "b" * 32, "en", translator=lambda *a: "X")

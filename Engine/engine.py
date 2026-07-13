@@ -691,7 +691,12 @@ class Job:
         try:
             from lyrics.translate import (claude_translate_lines,
                                           ensure_argos_pair,
-                                          fill_missing_translations)
+                                          fill_missing_translations,
+                                          looks_turkish)
+            # never translate Turkish songs, even if Whisper mislabels them
+            if looks_turkish(line_texts):
+                source_lang = "tr"
+                log("lyrics look Turkish; no translation needed")
             from publish.youtube import Keychain
             api_key = Keychain().get("anthropic_api_key")
             if api_key and source_lang != "tr":
