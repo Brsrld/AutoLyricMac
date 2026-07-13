@@ -614,10 +614,39 @@ class Job:
         self.set(progress=0.7, message="Ranking lyric candidates…")
         ranked = rank_candidates(candidates, artist, title, track_duration)
         if not ranked:
-            self.fail("lyrics_not_found",
-                      "No plausible lyrics found. You can add a .lrc/.txt file "
-                      "to Cache/lyrics_local/ and search again.")
-            return
+            # no provider hit: extract lyrics from the song's own vocals
+            self.set(progress=0.75,
+                     message="No lyrics found online — transcribing from "
+                             "the song itself (Demucs + Whisper)…")
+            try:
+                from lyrics.align import transcribe_words, words_to_lines
+                from lyrics.models import LyricsCandidate
+                from lyrics.separate import separate_vocals
+                vocals = separate_vocals(
+                    source_audio,
+                    log=lambda m: print(f"[engine] job {self.id} lyrics: {m}",
+                                        flush=True)) or source_audio
+                self._check_cancel()
+                words, lang = transcribe_words(vocals, ffmpeg=FFMPEG)
+                from lyrics.translate import looks_turkish
+                texts = words_to_lines(words)
+                if lang != "tr" and looks_turkish(texts):
+                    words, lang = transcribe_words(vocals, language="tr",
+                                                   ffmpeg=FFMPEG)
+                    texts = words_to_lines(words)
+                if len(texts) < 2:
+                    raise ValueError("no singable vocals detected")
+                from lyrics.ranking import RankedCandidate
+                cand = LyricsCandidate(provider="transcription",
+                                       artist=artist, title=title,
+                                       plain_text="\n".join(texts))
+                ranked = [RankedCandidate(cand, 0.5,
+                                          ["transcribed from the audio"])]
+            except Exception as exc:
+                self.fail("lyrics_not_found",
+                          f"No lyrics found online and transcription failed "
+                          f"({exc}). You can use Enter Lyrics Manually.")
+                return
         best = ranked[0]
         for line in best.reasons:
             print(f"[engine] job {self.id} lyrics: {line}", flush=True)

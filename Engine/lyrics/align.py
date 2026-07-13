@@ -255,6 +255,20 @@ def align_lyrics_monotonic(line_texts, asr_words, min_ratio=0.45):
     return aligned, round(matched_lines / n, 4), round(total_conf / n, 4)
 
 
+def words_to_lines(words, gap=0.9, max_words=8):
+    """Group ASR words into lyric lines on pauses (pure)."""
+    lines, cur = [], []
+    for i, w in enumerate(words):
+        if cur and (w["start"] - words[i - 1]["end"] > gap
+                    or len(cur) >= max_words):
+            lines.append(" ".join(x["text"] for x in cur))
+            cur = []
+        cur.append(w)
+    if cur:
+        lines.append(" ".join(x["text"] for x in cur))
+    return lines
+
+
 LRC_FALLBACK_CONFIDENCE = 0.6
 
 
