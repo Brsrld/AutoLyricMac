@@ -436,28 +436,12 @@ def render_archive(plan, audio_path, out_path, progress=None):
                                         scene_len, t_local, pulses)
                 arr = prev_arr * (1 - blend_p) + arr * blend_p
 
-            # incoming transition from the previous scene
-            trans = scene.get("transition") or {}
-            tdur = float(trans.get("duration") or 0)
-            if idx > 0 and tdur > 0 and t_local < tdur:
-                # refs breathe through white: most cuts become white fades
-                if trans.get("type") in ("crossfade", "block_wipe",
-                                         "layered_dissolve"):
-                    # continuous crossfade - motion never stalls
-                    tdur = max(0.5, min(0.9, 1.5 * beat_period))
-                    trans = {"type": "crossfade", "duration": tdur}
-                prev = scenes[idx - 1]
-                prev_len = max(0.001, prev["end"] - prev["start"])
-                prev_arr = _scene_frame(
-                    layers[idx - 1], layouts[idx - 1], 1.0, prev_len,
-                    prev_len, [])
-                arr = _apply_transition(arr, prev_arr, trans.get("type"),
-                                        t_local / tdur)
-
+            # sentence changes are clean cuts: the new photo count and
+            # placement IS the transition (user direction, and cheaper)
             # subtitle strip (enter 0.35s after transition, exit 0.25s)
             if subtitles[idx] is not None:
                 block, rect = subtitles[idx]
-                enter = min(1.0, max(0.0, (t_local - tdur * 0.5) / 0.8))
+                enter = min(1.0, max(0.0, t_local / 0.6))
                 exit_ = min(1.0, (scene["end"] - t) / 0.7)
                 alpha = ease_in_out(max(0.0, min(enter, exit_)))
                 if alpha > 0.01:
