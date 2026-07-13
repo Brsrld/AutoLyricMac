@@ -1114,9 +1114,10 @@ struct ContentView: View {
 
     private func startRender() {
         guard let source = activeJob, source.state == "done" else { return }
-        runPlanJob("Render") {
+        let style = plan?.style ?? "archiveCollage"
+        runPlanJob("Render (\(style))") {
             try await engine.createRenderJob(sourceJobId: source.jobId,
-                                             style: "archiveCollage")
+                                             style: style)
         }
     }
 

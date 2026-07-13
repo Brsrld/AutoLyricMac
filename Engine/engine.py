@@ -50,7 +50,7 @@ SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
 VIDEO_OUTPUT_DIR = REPO_ROOT / "Output" / "videos"
 SUBTITLE_STYLES = ("archiveCollage", "doodleMemory")
 PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
-RENDER_STYLES = ("archiveCollage",)   # doodleMemory arrives with Phase 6
+RENDER_STYLES = ("archiveCollage", "doodleMemory")
 
 # Minimum free disk space required before starting a download.
 MIN_FREE_BYTES = 500 * 1024 * 1024
@@ -822,11 +822,25 @@ class Job:
                      } for s in scenes],
                  })
 
+    def _words_by_line(self, seg_start):
+        """{line_index: words with segment-relative times} from the store."""
+        from lyrics.store import LyricsStore
+        payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(self.source_job_id)
+        words_by_line = {}
+        for ln in (payload or {}).get("lines", []):
+            words = [{"text": w["text"],
+                      "start": None if w["start"] is None
+                      else w["start"] - seg_start,
+                      "end": None if w["end"] is None
+                      else w["end"] - seg_start}
+                     for w in ln["words"]]
+            words_by_line[ln["line_index"]] = words
+        return words_by_line
+
     def _run_render(self):
         """Render the final styled video from the media-annotated plan."""
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         sys.path.insert(0, str(Path(__file__).resolve().parent / "render"))
-        from archive_renderer import render_archive
 
         source_audio = self._source_audio()
         if source_audio is None:
@@ -851,10 +865,17 @@ class Job:
             self.set(progress=0.05 + 0.85 * frac, message=msg)
 
         self.set(state="analyzing", progress=0.05,
-                 message="Rendering Archive Collage…")
+                 message=f"Rendering {self.style}…")
         try:
-            qa_frames = render_archive(plan, source_audio, out_path,
-                                       progress=report)
+            if self.style == "doodleMemory":
+                from doodle_renderer import render_doodle
+                words = self._words_by_line(float(plan["segment_start"]))
+                qa_frames = render_doodle(plan, words, source_audio, out_path,
+                                          progress=report)
+            else:
+                from archive_renderer import render_archive
+                qa_frames = render_archive(plan, source_audio, out_path,
+                                           progress=report)
         except CancelledError:
             out_path.unlink(missing_ok=True)
             raise
