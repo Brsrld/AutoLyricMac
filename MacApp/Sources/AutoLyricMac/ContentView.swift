@@ -1276,6 +1276,13 @@ struct ContentView: View {
     @ViewBuilder
     private func publishSection(outputPath: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            TextField("Video başlığı", text: $publishTitle)
+                .textFieldStyle(.roundedBorder)
+            TextField("Açıklama (postun altındaki yazı)", text: $publishDescription)
+                .textFieldStyle(.roundedBorder)
+            TextField("Etiketler — #lyrics #nostalji #keşfet gibi", text: $publishTags)
+                .textFieldStyle(.roundedBorder)
+
             Text("Publish to YouTube")
                 .font(.subheadline.weight(.semibold))
             if !youtubeConnected {
@@ -1309,12 +1316,6 @@ struct ContentView: View {
                     }
                     .controlSize(.small)
                 }
-                TextField("Video title", text: $publishTitle)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Açıklama (postun altındaki yazı)", text: $publishDescription)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Etiketler — #lyrics #nostalji #keşfet gibi", text: $publishTags)
-                    .textFieldStyle(.roundedBorder)
                 HStack(spacing: 12) {
                     Picker("Privacy", selection: $publishPrivacy) {
                         Text("Private").tag("private")
