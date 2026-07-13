@@ -95,8 +95,9 @@ def scene_layout(scene, index):
     # lively lines stack extra smaller frames around the main one
     band = scene.get("energy_band", "normal")
     extras = []
-    if band != "calm":
-        count = 1 if band == "normal" else 2
+    # 1-3 images per scene, randomly (seeded): count = 1 + extras(0-2)
+    count = rng.randint(0, 2)
+    if count:
         spots = [((0.62, 0.10), 0.30), ((0.06, 0.58), 0.36),
                  ((0.64, 0.55), 0.28)]
         for k in range(count):
@@ -107,7 +108,7 @@ def scene_layout(scene, index):
                            "rotation": rng.uniform(-1.2, 1.2)})
 
     return {
-        "photo_w": photo_w if band == "calm" else min(photo_w, 0.72),
+        "photo_w": photo_w if not extras else min(photo_w, 0.72),
         "photo_pos": photo_pos,
         "rotation": rotation,
         "blocks": blocks,

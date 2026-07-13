@@ -45,16 +45,21 @@ class TestSceneLayout(unittest.TestCase):
         for a, b in zip(widths, widths[1:]):
             self.assertGreater(abs(a - b), 0.2)
 
-    def test_lively_scenes_stack_extra_frames(self):
-        # calm = one long image; normal/energetic add smaller frames
-        self.assertEqual(scene_layout(scene(), 0)["extras"], [])
-        normal = scene_layout(scene(band="normal"), 0)
-        energetic = scene_layout(scene(band="energetic"), 1)
-        self.assertEqual(len(normal["extras"]), 1)
-        self.assertEqual(len(energetic["extras"]), 2)
-        self.assertLessEqual(normal["photo_w"], 0.72)
-        for extra in energetic["extras"]:
-            self.assertTrue(0.2 <= extra["w"] <= 0.45)
+    def test_scenes_show_one_to_three_images(self):
+        counts = set()
+        for i in range(24):
+            layout = scene_layout(scene(), i)
+            n = 1 + len(layout["extras"])
+            self.assertTrue(1 <= n <= 3)
+            counts.add(n)
+            if layout["extras"]:
+                self.assertLessEqual(layout["photo_w"], 0.72)
+                for extra in layout["extras"]:
+                    self.assertTrue(0.2 <= extra["w"] <= 0.45)
+        self.assertGreater(len(counts), 1, "count must actually vary")
+        # deterministic per scene index
+        self.assertEqual(len(scene_layout(scene(), 5)["extras"]),
+                         len(scene_layout(scene(), 5)["extras"]))
 
     def test_motion_types_map_to_zoom_direction(self):
         push = scene_layout(scene("slow_push"), 0)
