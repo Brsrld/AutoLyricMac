@@ -47,8 +47,10 @@ LYRICS_DB_PATH = REPO_ROOT / "Cache" / "lyrics.db"
 MEDIA_DB_PATH = REPO_ROOT / "Cache" / "media.db"
 MEDIA_CACHE_DIR = REPO_ROOT / "Cache" / "media"
 SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
+VIDEO_OUTPUT_DIR = REPO_ROOT / "Output" / "videos"
 SUBTITLE_STYLES = ("archiveCollage", "doodleMemory")
 PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
+RENDER_STYLES = ("archiveCollage",)   # doodleMemory arrives with Phase 6
 
 # Minimum free disk space required before starting a download.
 MIN_FREE_BYTES = 500 * 1024 * 1024
@@ -251,6 +253,8 @@ class Job:
                 self._run_plan()
             elif self.kind == "media":
                 self._run_media()
+            elif self.kind == "render":
+                self._run_render()
             else:
                 self._run_pipeline()
         except CancelledError:
@@ -818,6 +822,63 @@ class Job:
                      } for s in scenes],
                  })
 
+    def _run_render(self):
+        """Render the final styled video from the media-annotated plan."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "render"))
+        from archive_renderer import render_archive
+
+        source_audio = self._source_audio()
+        if source_audio is None:
+            return
+        plan_path = self._plan_path()
+        if not plan_path.exists():
+            self.fail("not_found", "Build a scene plan (and fetch media) first.")
+            return
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        with_media = sum(1 for s in plan["scenes"] if s.get("media"))
+        if with_media == 0:
+            self.fail("not_found", "Fetch licensed media before rendering.")
+            return
+
+        duration = float(plan["segment_end"]) - float(plan["segment_start"])
+        VIDEO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_path = (VIDEO_OUTPUT_DIR /
+                    f"{self.source_job_id[:8]}_{self.style}_{self.id[:8]}.mp4")
+
+        def report(frac, msg):
+            self._check_cancel()
+            self.set(progress=0.05 + 0.85 * frac, message=msg)
+
+        self.set(state="analyzing", progress=0.05,
+                 message="Rendering Archive Collage…")
+        try:
+            qa_frames = render_archive(plan, source_audio, out_path,
+                                       progress=report)
+        except CancelledError:
+            out_path.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            out_path.unlink(missing_ok=True)
+            self.fail("render_failed", f"Render failed: {exc}")
+            return
+
+        self._check_cancel()
+        self.set(state="verifying", progress=0.95, message="Verifying video…")
+        out_duration = self._probe_duration(out_path)
+        if out_duration is None or abs(out_duration - duration) > 0.5:
+            self.fail("ffmpeg_failed", "Rendered video failed verification.")
+            return
+        self.set(state="done", progress=1.0,
+                 message=f"Video ready ({with_media}/{len(plan['scenes'])} "
+                         f"scenes with media, {out_duration:.1f}s).",
+                 audio_path=str(out_path),
+                 audio_duration=out_duration,
+                 result={"output_path": str(out_path),
+                         "qa_frames": qa_frames,
+                         "scene_count": len(plan["scenes"]),
+                         "style": self.style})
+
     def _run_subprocess(self, cmd):
         """Run a tool with list args (never a shell); poll for cancellation."""
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -948,7 +1009,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             kind = body.get("kind", "download")
-            if kind in ("plan", "media"):
+            if kind == "render":
+                source_id = body.get("source_job_id", "")
+                if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
+                    self._send_json(400, {"error_code": "not_found",
+                                          "message": "A valid 'source_job_id' is required."})
+                    return
+                style = body.get("style", "archiveCollage")
+                if style not in RENDER_STYLES:
+                    self._send_json(400, {"error_code": "invalid_request",
+                                          "message": f"Rendering supports {RENDER_STYLES} for now."})
+                    return
+                job = Job(kind="render", source_job_id=source_id, style=style)
+            elif kind in ("plan", "media"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",

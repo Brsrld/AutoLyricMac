@@ -1,0 +1,367 @@
+"""Archive Collage final renderer (Phase 5).
+
+Renders a scene plan (Phase 4) + fetched licensed media into the final
+1080x1920/30fps video: warm paper artboard with intentional negative space,
+monochrome archival photos as framed movable objects, translucent grey/black/
+white blocks, slow editorial motion driven by the plan (beats only pulse),
+plan-selected transitions, grain/vignette/dust, and EN+TR lyric strips on
+irregular cream paper cutouts placed away from the photo.
+
+`scene_layout` is pure and deterministic so composition rules (photo size
+55–90% width, rotation ≤1.5°, consecutive-scene variety) are unit-testable
+without rendering a single frame.
+"""
+
+import random
+import sys
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from proto_common import (FPS, H, W, VideoWriter, drop_shadow, ease_in_out,
+                          lerp, make_grain_frames, mono_archive, paper_canvas,
+                          vignette_map)
+from subtitles.layout import Rect, place_block
+from subtitles.render import build_archive_subtitle
+
+OVERSIZE = 1.12          # artboard is rendered larger than the frame for drift
+BLOCK_PALETTE = [        # translucent layered rectangles (grey/black/white)
+    ((120, 118, 114), 200),
+    ((60, 58, 56), 225),
+    ((200, 197, 192), 170),
+    ((240, 238, 233), 150),
+    ((40, 38, 36), 240),
+]
+# position banks cycled so consecutive scenes never sit in the same corner
+_PHOTO_ANCHORS = [(0.07, 0.15), (0.34, 0.10), (0.12, 0.24), (0.28, 0.18),
+                  (0.05, 0.09), (0.20, 0.28)]
+
+
+# ---------------------------------------------------------------------------
+# Pure layout
+# ---------------------------------------------------------------------------
+
+def scene_layout(scene, index):
+    """Deterministic composition spec for one scene.
+
+    Returns dict with photo fraction geometry (of the oversized artboard),
+    rotation, translucent blocks, zoom span and drift derived from the plan's
+    motion, all within the style guide's ranges.
+    """
+    rng = random.Random(index * 977 + 13)
+    motion = scene.get("motion", {})
+    amount = float(motion.get("amount", 0.05))
+    mtype = motion.get("type", "slow_push")
+
+    photo_w = 0.55 + 0.35 * rng.random()               # 55–90 % of width
+    ax, ay = _PHOTO_ANCHORS[index % len(_PHOTO_ANCHORS)]
+    photo_pos = (min(ax + rng.uniform(-0.02, 0.03), 0.92 - photo_w * 0.9),
+                 ay + rng.uniform(-0.02, 0.04))
+    rotation = rng.uniform(-1.5, 1.5)
+    if abs(rotation) < 0.3:                            # always slightly askew
+        rotation = 0.45 if rotation >= 0 else -0.45
+
+    n_blocks = 1 + (index % 2)
+    blocks = []
+    for b in range(n_blocks):
+        color, alpha = BLOCK_PALETTE[(index * 2 + b + 1) % len(BLOCK_PALETTE)]
+        blocks.append({
+            "pos": (rng.uniform(0.05, 0.62), rng.uniform(0.08, 0.72)),
+            "size": (rng.uniform(0.18, 0.32), rng.uniform(0.14, 0.30)),
+            "color": color,
+            "alpha": alpha,
+            "in_front": b == 1 and index % 4 == 3,     # occasional front layer
+            "drift": (rng.uniform(-14, 14), rng.uniform(-10, 10)),
+        })
+
+    zoom_span = 1.0 + amount * 0.8                     # slow push/pull scale
+    if mtype == "slow_pull":
+        zoom = (zoom_span, 1.0)
+    elif mtype in ("slow_push", "layer_reposition"):
+        zoom = (1.0, zoom_span)
+    else:                                              # gentle_drift / rotate
+        zoom = (1.0, 1.0 + amount * 0.3)
+    drift_mag = 26 + amount * 300
+    angle = rng.uniform(0, 6.283)
+    drift = ((0.0, 0.0),
+             (drift_mag * np.cos(angle), drift_mag * 0.6 * np.sin(angle)))
+
+    return {
+        "photo_w": photo_w,
+        "photo_pos": photo_pos,
+        "rotation": rotation,
+        "blocks": blocks,
+        "zoom": zoom,
+        "drift": drift,
+        "max_photo_h": 0.60,                           # of artboard height
+    }
+
+
+def photo_screen_rect(layout):
+    """Approximate on-screen Rect of the framed photo, assuming the
+    centered crop at zoom≈1."""
+    off = (OVERSIZE - 1.0) / 2.0
+    x = (layout["photo_pos"][0] - off) * W * OVERSIZE
+    y = (layout["photo_pos"][1] - off) * H * OVERSIZE
+    w = layout["photo_w"] * W * OVERSIZE
+    h = min(layout["max_photo_h"], layout["photo_w"] * 1.4) * H * OVERSIZE
+    return Rect(max(0.0, x), max(0.0, y), w, h)
+
+
+def subtitle_avoid_rect(layout):
+    """Region subtitles must not cover: the upper part of the photo, where
+    faces and focal subjects live. Strips may lap over the photo's bottom
+    edge (editorial collage look) but never over faces."""
+    rect = photo_screen_rect(layout)
+    return Rect(rect.x, rect.y, rect.w, rect.h * 0.62)
+
+
+# ---------------------------------------------------------------------------
+# Layer building
+# ---------------------------------------------------------------------------
+
+def _load_scene_photo(scene):
+    media = scene.get("media")
+    if not media or not media.get("file_path"):
+        return None
+    path = Path(media["file_path"])
+    if not path.exists():
+        return None
+    return Image.open(path).convert("RGB")
+
+
+def build_scene_layer(scene, layout, seed):
+    """Oversized artboard: paper + blocks + framed monochrome photo."""
+    bw, bh = int(W * OVERSIZE), int(H * OVERSIZE)
+    board = Image.fromarray(paper_canvas(seed=7 + seed)).resize(
+        (bw, bh), Image.BILINEAR)
+
+    front_blocks = []
+    for blk in layout["blocks"]:
+        bx, by = int(bw * blk["pos"][0]), int(bh * blk["pos"][1])
+        bw_, bh_ = int(bw * blk["size"][0]), int(bh * blk["size"][1])
+        block = Image.new("RGBA", (bw_, bh_), (*blk["color"], blk["alpha"]))
+        if blk["in_front"]:
+            front_blocks.append((block, (bx, by)))
+        else:
+            board.paste(block, (bx, by), block)
+
+    photo = _load_scene_photo(scene)
+    if photo is not None:
+        photo = mono_archive(photo)
+        pw = int(bw * layout["photo_w"])
+        ph = min(int(pw * photo.height / photo.width),
+                 int(bh * layout["max_photo_h"]))
+        from proto_common import cover_resize
+        photo = cover_resize(photo, pw, ph)
+
+        # white matte border -> framed object, not a background
+        border = max(10, pw // 60)
+        framed = Image.new("RGB", (pw + border * 2, ph + border * 2),
+                           (246, 244, 239))
+        framed.paste(photo, (border, border))
+
+        rotated = framed.convert("RGBA").rotate(
+            layout["rotation"], expand=True, resample=Image.BICUBIC,
+            fillcolor=(0, 0, 0, 0))
+        px = int(bw * layout["photo_pos"][0])
+        py = int(bh * layout["photo_pos"][1])
+        shadow, pad, off = drop_shadow(rotated.size)
+        board.paste(shadow, (px - pad + off[0], py - pad + off[1]), shadow)
+        board.paste(rotated, (px, py), rotated)
+
+    for block, pos in front_blocks:
+        board.paste(block, pos, block)
+    return board
+
+
+def _fade_alpha(img, alpha):
+    if alpha >= 1.0:
+        return img
+    faded = img.copy()
+    faded.putalpha(faded.getchannel("A").point(lambda v: int(v * alpha)))
+    return faded
+
+
+# ---------------------------------------------------------------------------
+# Frame sampling
+# ---------------------------------------------------------------------------
+
+def _beat_pulse(t, pulse_beats, strength=0.004, decay=0.14):
+    pulse = 0.0
+    for b in pulse_beats:
+        dt = t - b
+        if 0.0 <= dt < decay:
+            pulse = max(pulse, strength * (1.0 - dt / decay))
+    return pulse
+
+
+def _scene_frame(layer, layout, local, scene_len, t_local, pulse_beats):
+    """Crop the oversized layer for one frame (zoom + drift + beat pulse)."""
+    e = ease_in_out(min(1.0, local))
+    z = lerp(layout["zoom"][0], layout["zoom"][1], e)
+    z *= 1.0 + _beat_pulse(t_local, pulse_beats)
+    dx = lerp(layout["drift"][0][0], layout["drift"][1][0], e)
+    dy = lerp(layout["drift"][0][1], layout["drift"][1][1], e)
+
+    lw, lh = layer.size
+    cw, ch = int(W / z), int(H / z)
+    cx = max(0, min(lw - cw, (lw - cw) / 2 + dx))
+    cy = max(0, min(lh - ch, (lh - ch) / 2 + dy))
+    frame = layer.crop((int(cx), int(cy), int(cx) + cw, int(cy) + ch))
+    if (cw, ch) != (W, H):
+        frame = frame.resize((W, H), Image.BILINEAR)
+    return np.asarray(frame.convert("RGB"), dtype=np.float32)
+
+
+def _apply_transition(arr, prev_arr, kind, progress):
+    """Blend into the incoming scene during its transition window."""
+    p = ease_in_out(progress)
+    if kind == "fade_white":
+        if p < 0.5:
+            return prev_arr * (1 - p * 2 * 0.92) + 248.0 * (p * 2 * 0.92)
+        q = (p - 0.5) * 2
+        return arr * (1 - (1 - q) * 0.92) + 248.0 * ((1 - q) * 0.92)
+    if kind == "fade_dark":
+        if p < 0.5:
+            return prev_arr * (1 - p * 2 * 0.94) + 16.0 * (p * 2 * 0.94)
+        q = (p - 0.5) * 2
+        return arr * (1 - (1 - q) * 0.94) + 16.0 * ((1 - q) * 0.94)
+    if kind == "block_wipe":
+        edge = int(H * p)
+        out = prev_arr.copy()
+        out[:edge] = arr[:edge]
+        band = slice(max(0, edge - 14), edge)
+        out[band] = out[band] * 0.4 + 235.0 * 0.6   # paper edge on the wipe
+        return out
+    # crossfade / layered_dissolve
+    return prev_arr * (1 - p) + arr * p
+
+
+def _dust_layer(shape, rng):
+    """Sparse dust specks + one scratch line, regenerated every few frames."""
+    dust = np.zeros(shape[:2], dtype=np.float32)
+    for _ in range(rng.integers(4, 10)):
+        y, x = rng.integers(0, shape[0]), rng.integers(0, shape[1])
+        dust[y:y + 2, x:x + 2] = rng.uniform(20, 60)
+    if rng.random() < 0.5:
+        x = rng.integers(0, shape[1])
+        y0 = rng.integers(0, shape[0] - 240)
+        dust[y0:y0 + rng.integers(90, 240), x] = rng.uniform(14, 34)
+    return dust[..., None]
+
+
+# ---------------------------------------------------------------------------
+# Main renderer
+# ---------------------------------------------------------------------------
+
+def render_archive(plan, audio_path, out_path, progress=None):
+    """Render the full Archive Collage video for a media-annotated plan.
+
+    Returns the list of QA frame paths written next to the video.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    scenes = plan["scenes"]
+    seg_start = float(plan["segment_start"])
+    duration = float(plan["segment_end"]) - seg_start
+
+    layouts = [scene_layout(s, i) for i, s in enumerate(scenes)]
+    layers = [build_scene_layer(s, l, i)
+              for i, (s, l) in enumerate(zip(scenes, layouts))]
+
+    # subtitles: one block per lyric scene, placed away from the photo
+    subtitles = []
+    for i, scene in enumerate(scenes):
+        if not scene.get("lyric"):
+            subtitles.append(None)
+            continue
+        block, size = build_archive_subtitle(
+            scene["lyric"], scene.get("translation"), seed=i,
+            uncertain=bool(scene.get("uncertain")))
+        if block is None:
+            subtitles.append(None)
+            continue
+        band = (scene.get("subtitle") or {}).get("band", "lower")
+        rect = place_block(size, avoid=[subtitle_avoid_rect(layouts[i])],
+                           preferred=band, seed=i)
+        subtitles.append((block, rect))
+
+    grain = make_grain_frames(strength=4.5)
+    vig = vignette_map(0.16)
+    total = int(round(duration * FPS))
+    rng = np.random.default_rng(4242)
+    flicker = 1.0 + np.cumsum(rng.normal(0, 0.004, total)).clip(-0.02, 0.02)
+    dust_rng = np.random.default_rng(777)
+    dust = None
+
+    writer = VideoWriter(out_path, audio_path, audio_offset=seg_start,
+                         duration=duration)
+    qa_at = sorted({min(total - 1, int(total * f))
+                    for f in (0.06, 0.28, 0.5, 0.72, 0.94)})
+    qa_paths = []
+    try:
+        for n in range(total):
+            t = n / FPS
+            idx = len(scenes) - 1
+            for i, s in enumerate(scenes):
+                if s["start"] <= t < s["end"]:
+                    idx = i
+                    break
+            scene, layout = scenes[idx], layouts[idx]
+            scene_len = max(0.001, scene["end"] - scene["start"])
+            t_local = t - scene["start"]
+            local = t_local / scene_len
+            pulses = scene.get("motion", {}).get("pulse_beats", [])
+
+            arr = _scene_frame(layers[idx], layout, local, scene_len,
+                               t_local, pulses)
+
+            # incoming transition from the previous scene
+            trans = scene.get("transition") or {}
+            tdur = float(trans.get("duration") or 0)
+            if idx > 0 and tdur > 0 and t_local < tdur:
+                prev = scenes[idx - 1]
+                prev_len = max(0.001, prev["end"] - prev["start"])
+                prev_arr = _scene_frame(
+                    layers[idx - 1], layouts[idx - 1], 1.0, prev_len,
+                    prev_len, [])
+                arr = _apply_transition(arr, prev_arr, trans.get("type"),
+                                        t_local / tdur)
+
+            # subtitle strip (enter 0.35s after transition, exit 0.25s)
+            if subtitles[idx] is not None:
+                block, rect = subtitles[idx]
+                enter = min(1.0, max(0.0, (t_local - tdur) / 0.35))
+                exit_ = min(1.0, (scene["end"] - t) / 0.25)
+                alpha = ease_in_out(max(0.0, min(enter, exit_)))
+                if alpha > 0.01:
+                    rise = (1.0 - ease_in_out(enter)) * 20
+                    faded = _fade_alpha(block, alpha)
+                    tmp = Image.fromarray(arr.astype(np.uint8))
+                    tmp.paste(faded, (int(rect.x), int(rect.y + rise)), faded)
+                    arr = np.asarray(tmp, dtype=np.float32)
+
+            # grade: flicker + vignette + grain (+ dust on flagged scenes)
+            arr *= flicker[n] * vig
+            arr += grain[n % len(grain)]
+            if "dust_flicker" in (scene.get("overlays") or []):
+                if dust is None or n % 5 == 0:
+                    dust = _dust_layer(arr.shape, dust_rng)
+                arr += dust
+
+            writer.write(np.clip(arr, 0, 255).astype(np.uint8))
+            if n in qa_at:
+                qa = out_path.with_name(f"{out_path.stem}_qa_{n:04d}.png")
+                Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).save(qa)
+                qa_paths.append(str(qa))
+            if progress and n % 30 == 0:
+                progress(n / total,
+                         f"Rendering Archive Collage… {int(100 * n / total)}%")
+    finally:
+        writer.close()
+    return qa_paths

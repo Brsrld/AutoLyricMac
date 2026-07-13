@@ -391,6 +391,17 @@ final class EngineClient: ObservableObject {
         return created.jobId
     }
 
+    /// Render the final styled video from the media-annotated plan.
+    func createRenderJob(sourceJobId: String, style: String) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "render",
+                                                     "source_job_id": sourceJobId,
+                                                     "style": style],
+                                              timeout: 15)
+        return created.jobId
+    }
+
     /// Fetch the stored scene plan (with media annotations when fetched).
     func fetchPlan(sourceJobId: String) async throws -> PlanPayload {
         var request = URLRequest(url: baseURL.appendingPathComponent("plan/\(sourceJobId)"))

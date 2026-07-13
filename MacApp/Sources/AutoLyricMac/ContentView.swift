@@ -585,6 +585,10 @@ struct ContentView: View {
         }
     }
 
+    private var planHasMedia: Bool {
+        plan?.scenes.contains(where: { $0.media != nil }) == true
+    }
+
     private var planSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Scene Plan & Media")
@@ -605,6 +609,10 @@ struct ContentView: View {
                 Button("Fetch Licensed Media") { startMediaFetch() }
                     .disabled(engine.status != .connected || planJobRunning
                               || plan == nil || !anyProviderKey)
+                Button("Render Video") { startRender() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(engine.status != .connected || planJobRunning
+                              || planHasMedia == false)
                 if planJobRunning {
                     Button("Cancel", role: .cancel) { cancelPlanJob() }
                 }
@@ -629,6 +637,22 @@ struct ContentView: View {
                 Label(error, systemImage: "xmark.octagon")
                     .font(.callout)
                     .foregroundStyle(.red)
+            }
+
+            if planJob?.kind == "render", planJob?.state == "done",
+               let path = planJob?.result?.outputPath {
+                HStack(spacing: 12) {
+                    Button {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    } label: {
+                        Label("Open Video", systemImage: "play.rectangle.fill")
+                    }
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: path)])
+                    }
+                    .controlSize(.small)
+                }
             }
 
             if let plan {
@@ -1085,6 +1109,14 @@ struct ContentView: View {
         runPlanJob("Media fetch") {
             try await engine.createMediaJob(sourceJobId: source.jobId,
                                             apiKeys: keys)
+        }
+    }
+
+    private func startRender() {
+        guard let source = activeJob, source.state == "done" else { return }
+        runPlanJob("Render") {
+            try await engine.createRenderJob(sourceJobId: source.jobId,
+                                             style: "archiveCollage")
         }
     }
 
