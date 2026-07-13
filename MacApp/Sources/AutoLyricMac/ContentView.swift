@@ -47,6 +47,17 @@ struct ContentView: View {
     @State private var translationDraft: String = ""
     @State private var previewStyle: String = "archiveCollage"
 
+    // Scene plan & media (Phase 4)
+    @State private var planStyle: String = "automatic"
+    @State private var planJob: JobStatus?
+    @State private var planTask: Task<Void, Never>?
+    @State private var planError: String?
+    @State private var plan: PlanPayload?
+    @State private var pexelsKey: String = ""
+    @State private var pixabayKey: String = ""
+    @State private var unsplashKey: String = ""
+    @State private var keysLoaded = false
+
     private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
@@ -95,6 +106,10 @@ struct ContentView: View {
                     segmentSection
                     Divider()
                     lyricsSection
+                    if lyrics?.aligned == true {
+                        Divider()
+                        planSection
+                    }
                 }
 
                 Divider()
@@ -557,6 +572,171 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Scene plan & media (Phase 4)
+
+    private var planJobRunning: Bool {
+        if let job = planJob { return !job.isTerminal }
+        return planTask != nil && planJob == nil
+    }
+
+    private var anyProviderKey: Bool {
+        ![pexelsKey, pixabayKey, unsplashKey].allSatisfy {
+            $0.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+    }
+
+    private var planSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Scene Plan & Media")
+                .font(.headline)
+
+            HStack(spacing: 12) {
+                Picker("Plan style", selection: $planStyle) {
+                    Text("Automatic").tag("automatic")
+                    Text("Archive Collage").tag("archiveCollage")
+                    Text("Doodle Memory").tag("doodleMemory")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 380)
+                Button("Build Scene Plan") { startPlan() }
+                    .disabled(engine.status != .connected || planJobRunning
+                              || analysisJob?.state != "done")
+                Button("Fetch Licensed Media") { startMediaFetch() }
+                    .disabled(engine.status != .connected || planJobRunning
+                              || plan == nil || !anyProviderKey)
+                if planJobRunning {
+                    Button("Cancel", role: .cancel) { cancelPlanJob() }
+                }
+            }
+            if analysisJob?.state != "done" {
+                Text("Requires a selected segment (run Analyze first).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            keysSection
+
+            if let job = planJob {
+                if !job.isTerminal {
+                    ProgressView(value: job.progress)
+                }
+                Label(job.message, systemImage: iconForJobState(job.state))
+                    .font(.callout)
+                    .foregroundStyle(job.state == "error" ? .red : .primary)
+            }
+            if let error = planError {
+                Label(error, systemImage: "xmark.octagon")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+
+            if let plan {
+                planDetail(plan)
+            }
+        }
+        .onAppear { loadKeysOnce() }
+    }
+
+    private var keysSection: some View {
+        DisclosureGroup("Stock Media API Keys (stored in Keychain)") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Only official provider APIs are used. Keys stay in your macOS Keychain, travel only to the local engine, and are never written to disk or logs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("Pexels").frame(width: 70, alignment: .leading)
+                    SecureField("Pexels API key (free at pexels.com/api)", text: $pexelsKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack {
+                    Text("Pixabay").frame(width: 70, alignment: .leading)
+                    SecureField("Pixabay API key (optional)", text: $pixabayKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                HStack {
+                    Text("Unsplash").frame(width: 70, alignment: .leading)
+                    SecureField("Unsplash access key (optional)", text: $unsplashKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                Button("Save Keys to Keychain") {
+                    KeychainStore.set(pexelsKey.trimmingCharacters(in: .whitespaces),
+                                      account: "pexels_api_key")
+                    KeychainStore.set(pixabayKey.trimmingCharacters(in: .whitespaces),
+                                      account: "pixabay_api_key")
+                    KeychainStore.set(unsplashKey.trimmingCharacters(in: .whitespaces),
+                                      account: "unsplash_api_key")
+                    AppLog.shared.append("Stock media keys saved to Keychain.")
+                }
+                .controlSize(.small)
+            }
+            .padding(.top, 4)
+        }
+        .font(.callout)
+    }
+
+    @ViewBuilder
+    private func planDetail(_ plan: PlanPayload) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("\(plan.sceneCount) scenes (\(plan.lyricSceneCount) lyric)  •  style: \(plan.style)")
+                if plan.style != plan.recommendedStyle {
+                    Text("recommended: \(plan.recommendedStyle)")
+                        .foregroundStyle(.orange)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            if let reason = plan.recommendationReason {
+                Text("Automatic choice: \(reason)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(plan.scenes) { scene in
+                    sceneRow(scene)
+                }
+            }
+            .padding(8)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    @ViewBuilder
+    private func sceneRow(_ scene: ScenePayload) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text("\(Self.formatDuration(scene.start))–\(Self.formatDuration(scene.end))")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 86, alignment: .leading)
+                Text(scene.emotion)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(.quaternary, in: Capsule())
+                Text(scene.lyric ?? "(instrumental)")
+                    .font(.callout)
+                    .foregroundStyle(scene.lyric == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                Text("search: \(scene.queries.first ?? "—")")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if let media = scene.media {
+                    Label("\(media.provider) · \(media.creator ?? "?") · \(media.license ?? "?")\(media.adaptation.map { " · \($0.strategy)" } ?? "")",
+                          systemImage: "photo")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.leading, 94)
+        }
+        .padding(.vertical, 2)
+    }
+
     private var logSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Activity")
@@ -656,6 +836,9 @@ struct ContentView: View {
         lyricsError = nil
         lyrics = nil
         editingLine = nil
+        planJob = nil
+        planError = nil
+        plan = nil
         stopPreview()
         let url = youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines)
         jobTask = Task {
@@ -836,6 +1019,83 @@ struct ContentView: View {
             } catch {
                 lyricsError = "Could not save the line: \(error.localizedDescription)"
             }
+        }
+    }
+
+    // MARK: - Plan & media actions
+
+    private func loadKeysOnce() {
+        guard !keysLoaded else { return }
+        keysLoaded = true
+        pexelsKey = KeychainStore.get(account: "pexels_api_key") ?? ""
+        pixabayKey = KeychainStore.get(account: "pixabay_api_key") ?? ""
+        unsplashKey = KeychainStore.get(account: "unsplash_api_key") ?? ""
+    }
+
+    private func runPlanJob(_ description: String,
+                            create: @escaping () async throws -> String) {
+        planError = nil
+        planJob = nil
+        planTask = Task {
+            do {
+                let jobId = try await create()
+                AppLog.shared.append("\(description) job \(jobId.prefix(8)) started.")
+                while !Task.isCancelled {
+                    let status = try await engine.jobStatus(id: jobId)
+                    planJob = status
+                    if status.isTerminal {
+                        AppLog.shared.append("\(description) \(status.state): \(status.message)")
+                        if status.state == "done", let source = activeJob {
+                            plan = try? await engine.fetchPlan(sourceJobId: source.jobId)
+                        }
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+            } catch let error as EngineAPIError {
+                planError = error.errorDescription
+                AppLog.shared.append("\(description) failed: \(error.errorDescription ?? "unknown error")")
+            } catch {
+                planError = "Lost contact with the local engine: \(error.localizedDescription)"
+            }
+            planTask = nil
+        }
+    }
+
+    private func startPlan() {
+        guard let source = activeJob, source.state == "done" else { return }
+        let segmentStart = analysisJob?.result?.segmentStart ?? 0
+        runPlanJob("Scene plan") {
+            try await engine.createPlanJob(sourceJobId: source.jobId,
+                                           style: planStyle,
+                                           segmentStart: segmentStart,
+                                           targetSeconds: durationSeconds)
+        }
+    }
+
+    private func startMediaFetch() {
+        guard let source = activeJob, source.state == "done" else { return }
+        var keys: [String: String] = [:]
+        let pexels = pexelsKey.trimmingCharacters(in: .whitespaces)
+        let pixabay = pixabayKey.trimmingCharacters(in: .whitespaces)
+        let unsplash = unsplashKey.trimmingCharacters(in: .whitespaces)
+        if !pexels.isEmpty { keys["pexels"] = pexels }
+        if !pixabay.isEmpty { keys["pixabay"] = pixabay }
+        if !unsplash.isEmpty { keys["unsplash"] = unsplash }
+        runPlanJob("Media fetch") {
+            try await engine.createMediaJob(sourceJobId: source.jobId,
+                                            apiKeys: keys)
+        }
+    }
+
+    private func cancelPlanJob() {
+        guard let job = planJob, !job.isTerminal else {
+            planTask?.cancel()
+            planTask = nil
+            return
+        }
+        Task {
+            try? await engine.cancelJob(id: job.jobId)
         }
     }
 

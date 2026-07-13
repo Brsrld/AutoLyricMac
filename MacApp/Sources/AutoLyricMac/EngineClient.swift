@@ -98,6 +98,64 @@ struct JobResult: Decodable, Equatable {
     let outputPath: String?
     let qaFrames: [String]?
     let style: String?
+    // scene plan (Phase 4)
+    let sceneCount: Int?
+    let lyricSceneCount: Int?
+    let recommendedStyle: String?
+    let recommendationReason: String?
+    // media fetch (Phase 4)
+    let fetchedCount: Int?
+    let providerErrors: [String]?
+    let sceneErrors: [String]?
+}
+
+/// Adaptation decision for one media asset (never stretch).
+struct MediaAdaptation: Decodable, Equatable {
+    let strategy: String
+    let reason: String
+}
+
+/// The licensed asset chosen for a scene, with attribution.
+struct SceneMediaPayload: Decodable, Equatable {
+    let provider: String
+    let providerRef: String?
+    let kind: String?
+    let width: Int?
+    let height: Int?
+    let pageUrl: String?
+    let creator: String?
+    let license: String?
+    let filePath: String?
+    let adaptation: MediaAdaptation?
+}
+
+/// One planned scene from the deterministic planner.
+struct ScenePayload: Decodable, Equatable, Identifiable {
+    let sceneIndex: Int
+    let start: Double
+    let end: Double
+    let duration: Double
+    let lyric: String?
+    let translation: String?
+    let emotion: String
+    let energyBand: String
+    let subjects: [String]
+    let queries: [String]
+    let mediaPreference: String
+    let media: SceneMediaPayload?
+
+    var id: Int { sceneIndex }
+}
+
+/// Stored scene plan from GET /plan/<job_id>.
+struct PlanPayload: Decodable, Equatable {
+    let style: String
+    let recommendedStyle: String
+    let recommendationConfidence: Double?
+    let recommendationReason: String?
+    let sceneCount: Int
+    let lyricSceneCount: Int
+    let scenes: [ScenePayload]
 }
 
 /// One word of a lyric line with aligned timing and confidence.
@@ -305,6 +363,40 @@ final class EngineClient: ObservableObject {
         if let correctedText { body["corrected_text"] = correctedText }
         if let translation { body["translation"] = translation }
         return try await post(path: "lyrics/\(sourceJobId)/line", body: body, timeout: 10)
+    }
+
+    /// Build a scene plan from aligned lyrics + audio analysis.
+    func createPlanJob(sourceJobId: String, style: String,
+                       segmentStart: Double, targetSeconds: Int) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "plan",
+                                                     "source_job_id": sourceJobId,
+                                                     "style": style,
+                                                     "segment_start": segmentStart,
+                                                     "target_seconds": targetSeconds],
+                                              timeout: 15)
+        return created.jobId
+    }
+
+    /// Fetch licensed stock media for a stored plan. Keys go over loopback
+    /// only and are never persisted by the engine.
+    func createMediaJob(sourceJobId: String, apiKeys: [String: String]) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "media",
+                                                     "source_job_id": sourceJobId,
+                                                     "api_keys": apiKeys],
+                                              timeout: 15)
+        return created.jobId
+    }
+
+    /// Fetch the stored scene plan (with media annotations when fetched).
+    func fetchPlan(sourceJobId: String) async throws -> PlanPayload {
+        var request = URLRequest(url: baseURL.appendingPathComponent("plan/\(sourceJobId)"))
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try Self.decode(data: data, response: response)
     }
 
     func jobStatus(id: String) async throws -> JobStatus {

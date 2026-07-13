@@ -173,6 +173,93 @@ final class MetadataParsingTests: XCTestCase {
     }
 }
 
+final class PlanPayloadTests: XCTestCase {
+    private let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return d
+    }()
+
+    func testPlanParsingWithAndWithoutMedia() throws {
+        let json = """
+        {"style": "doodleMemory", "recommended_style": "doodleMemory",
+         "recommendation_confidence": 0.65,
+         "recommendation_reason": "warm emotions dominate",
+         "segment_start": 0.0, "segment_end": 18.0,
+         "scene_count": 2, "lyric_scene_count": 1,
+         "scenes": [
+           {"scene_index": 0, "start": 0.0, "end": 6.0, "duration": 6.0,
+            "target_duration": [3.0, 5.0], "lyric": "Hold me close",
+            "translation": null, "uncertain": false,
+            "meaning": "love moment", "emotion": "love", "energy": 0.5,
+            "energy_band": "normal", "subjects": ["embrace"],
+            "queries": ["tight embrace couple"], "media_preference": "photo",
+            "motion": {"type": "breathe", "amount": 0.05, "pulse_beats": [0.5]},
+            "transition": {"type": "cut", "duration": 0.0},
+            "overlays": ["warm_grain"],
+            "subtitle": {"band": "lower", "seed": 0},
+            "media": {"provider": "pexels", "provider_ref": "9",
+                      "kind": "photo", "width": 2000, "height": 3200,
+                      "page_url": "https://example.com", "creator": "Ada",
+                      "license": "Pexels License", "query": "embrace",
+                      "file_path": "/tmp/x.jpg",
+                      "adaptation": {"strategy": "portrait_crop",
+                                     "reason": "portrait source"}}},
+           {"scene_index": 1, "start": 6.0, "end": 12.0, "duration": 6.0,
+            "target_duration": [3.0, 5.0], "lyric": null, "translation": null,
+            "uncertain": false, "meaning": "neutral instrumental passage",
+            "emotion": "neutral", "energy": 0.3, "energy_band": "calm",
+            "subjects": [], "queries": ["soft abstract light texture"],
+            "media_preference": "photo",
+            "motion": {"type": "slide_in", "amount": 0.04, "pulse_beats": []},
+            "transition": {"type": "paper_wipe", "duration": 0.3},
+            "overlays": ["warm_grain"],
+            "subtitle": {"band": "center", "seed": 1},
+            "media": null}
+         ]}
+        """
+        let plan = try decoder.decode(PlanPayload.self, from: Data(json.utf8))
+        XCTAssertEqual(plan.sceneCount, 2)
+        XCTAssertEqual(plan.scenes[0].media?.provider, "pexels")
+        XCTAssertEqual(plan.scenes[0].media?.adaptation?.strategy, "portrait_crop")
+        XCTAssertNil(plan.scenes[1].media)
+        XCTAssertNil(plan.scenes[1].lyric)
+        XCTAssertEqual(plan.scenes[1].emotion, "neutral")
+    }
+
+    func testMediaJobResultParsing() throws {
+        let json = """
+        {"job_id": "abc", "kind": "media", "state": "done", "progress": 1.0,
+         "message": "Media ready", "error_code": null, "audio_path": null,
+         "audio_duration": null, "audio_format": null,
+         "result": {"fetched_count": 4, "scene_count": 5,
+                    "provider_errors": ["pixabay: key rejected"],
+                    "scene_errors": []}}
+        """
+        let status = try decoder.decode(JobStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.result?.fetchedCount, 4)
+        XCTAssertEqual(status.result?.providerErrors?.count, 1)
+    }
+}
+
+final class KeychainStoreTests: XCTestCase {
+    private let account = "test_key_roundtrip"
+
+    override func tearDown() {
+        KeychainStore.set("", account: account)
+        super.tearDown()
+    }
+
+    func testRoundtripUpdateAndClear() {
+        XCTAssertTrue(KeychainStore.set("secret-1", account: account))
+        XCTAssertEqual(KeychainStore.get(account: account), "secret-1")
+        XCTAssertTrue(KeychainStore.set("secret-2", account: account))
+        XCTAssertEqual(KeychainStore.get(account: account), "secret-2")
+        XCTAssertTrue(KeychainStore.set("", account: account))
+        XCTAssertNil(KeychainStore.get(account: account))
+    }
+}
+
 final class SongTitleParserTests: XCTestCase {
     func testArtistDashTitle() {
         let g = SongTitleParser.guess(title: "Sezen Aksu - Gidiyorum (Official Video)",
