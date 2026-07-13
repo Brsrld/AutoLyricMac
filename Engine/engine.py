@@ -400,8 +400,8 @@ class Job:
         }
         source_info = {}
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                source_info = ydl.extract_info(self.url, download=True) or {}
+            source_info = robust_extract(self.url, ydl_opts,
+                                         download=True) or {}
         except CancelledError:
             raise
         except yt_dlp.utils.DownloadError as exc:
@@ -1345,6 +1345,39 @@ JOBS_LOCK = threading.Lock()
 # Inspection (metadata only, no download)
 # --------------------------------------------------------------------------
 
+def ydl_variants(base_opts):
+    """Option sets tried in order when YouTube demands sign-in: default,
+    iOS player client, then the user's own browser session via yt-dlp's
+    official cookies-from-browser (nothing is ever stored in the repo)."""
+    yield dict(base_opts)
+    v = dict(base_opts)
+    v["extractor_args"] = {"youtube": {"player_client": ["ios", "web"]}}
+    yield v
+    for browser in ("chrome", "safari", "firefox"):
+        v = dict(base_opts)
+        v["cookiesfrombrowser"] = (browser,)
+        yield v
+
+
+def robust_extract(url, base_opts, download):
+    """extract_info with the sign-in fallback chain; raises DownloadError."""
+    import yt_dlp
+    last = None
+    for opts in ydl_variants(base_opts):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=download)
+        except yt_dlp.utils.DownloadError as exc:
+            last = exc
+            text = str(exc)
+            if not any(m in text for m in ("Sign in to confirm", "cookies",
+                                           "Requested format")):
+                raise
+        except Exception as exc:      # a browser may simply not exist
+            last = yt_dlp.utils.DownloadError(str(exc))
+    raise last
+
+
 def inspect_url(url):
     """Fetch metadata for a URL without downloading media."""
     video_id = validate_youtube_url(url)
@@ -1355,8 +1388,7 @@ def inspect_url(url):
     ydl_opts = {"quiet": True, "no_warnings": True, "noplaylist": True,
                 "skip_download": True, "socket_timeout": 15}
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = robust_extract(url, ydl_opts, download=False)
     except yt_dlp.utils.DownloadError as exc:
         code, human = classify_ytdlp_error(str(exc))
         return 502, {"valid": False, "error_code": code, "message": human}
