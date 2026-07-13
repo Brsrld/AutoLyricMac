@@ -95,6 +95,33 @@ def _adapted_full_frame(img, strategy, ow, oh):
     return cover_resize(img, ow, oh)          # portrait/square cover crop
 
 
+def _boil_variants(img, n=3, amp=7, seed=5):
+    """Hand-drawn 'line boil': n subtly warped copies of the drawn scene,
+    cycled at ~6 fps so the illustration wiggles like live drawing."""
+    import random as _r
+    rng = _r.Random(seed)
+    w, h = img.size
+    gx, gy = 4, 6
+    variants = [img]
+    for _ in range(n - 1):
+        mesh = []
+        cw, ch = w / gx, h / gy
+        for j in range(gy):
+            for i2 in range(gx):
+                box = (int(i2 * cw), int(j * ch),
+                       int((i2 + 1) * cw), int((j + 1) * ch))
+                q = []
+                for cx, cy in ((box[0], box[1]), (box[0], box[3]),
+                               (box[2], box[3]), (box[2], box[1])):
+                    jx = 0 if cx in (0, w) else rng.uniform(-amp, amp)
+                    jy = 0 if cy in (0, h) else rng.uniform(-amp, amp)
+                    q += [cx + jx, cy + jy]
+                mesh.append((box, tuple(q)))
+        variants.append(img.transform((w, h), Image.MESH, mesh,
+                                      Image.BILINEAR))
+    return variants
+
+
 def build_scene_background(scene, lut):
     """Oversized warm-graded background layer for one scene."""
     bw, bh = int(W * OVERSIZE), int(H * OVERSIZE)
@@ -157,7 +184,13 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
     duration = float(plan["segment_end"]) - seg_start
 
     lut = warm_memory_lut()
-    backgrounds = [build_scene_background(s, lut) for s in scenes]
+    backgrounds = []
+    for si, sc in enumerate(scenes):
+        bg = build_scene_background(sc, lut)
+        if (sc.get("media") or {}).get("provider") == "fal_ai":
+            backgrounds.append(_boil_variants(bg, seed=si * 17 + 5))
+        else:
+            backgrounds.append([bg])
 
     prepared = []      # per scene: doodle sprite + layout + subtitle stickers
     for i, scene in enumerate(scenes):
@@ -220,7 +253,8 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
         local = min(1.0, max(0.0, t_local / scene_len))
         pulses = scene.get("motion", {}).get("pulse_beats", [])
 
-        bg = backgrounds[idx]
+        bgs = backgrounds[idx]
+        bg = bgs[int(t * 6) % len(bgs)]
         z = 1.0 + 0.035 * ease_in_out(local)
         lw, lh = bg.size
         cw, ch = min(int(lw / z), lw), min(int(lh / z), lh)
