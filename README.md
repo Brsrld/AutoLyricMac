@@ -8,6 +8,12 @@ on Apple Silicon, with one click.
 > and word-aligns the lyrics, plans scenes from their *meaning*, gathers
 > licensed or AI-drawn visuals, renders a styled video, and publishes it.
 
+## 📱 See it live
+
+Videos made by this app, published by this app:
+**[@mysticaimusic](https://www.instagram.com/mysticaimusic/)** on Instagram —
+latest reel: [instagram.com/reel/Davv5agFKli](https://www.instagram.com/reel/Davv5agFKli/)
+
 ## ✨ Features
 
 - **One-click pipeline** — download → segment → lyrics → alignment → scene
