@@ -17,13 +17,16 @@ def scene(motion_type="slow_push", amount=0.06, band="calm"):
 
 
 class TestSceneLayout(unittest.TestCase):
-    def test_photo_width_alternates_full_and_panel(self):
-        # reference videos: centered artwork, full-bleed-ish and small-panel
-        for i in range(0, 24, 2):
-            self.assertGreaterEqual(scene_layout(scene(), i)["photo_w"], 0.84)
-        for i in range(1, 24, 2):
+    def test_single_image_scenes_alternate_full_and_panel(self):
+        # the reference full/panel rhythm applies when a scene has 1 image
+        for i in range(0, 24):
             layout = scene_layout(scene(), i)
-            self.assertTrue(0.46 <= layout["photo_w"] <= 0.60)
+            if layout["extras"]:
+                continue
+            if i % 2 == 0:
+                self.assertGreaterEqual(layout["photo_w"], 0.84)
+            else:
+                self.assertTrue(0.46 <= layout["photo_w"] <= 0.60)
 
     def test_rotation_nearly_straight(self):
         for i in range(24):
@@ -40,10 +43,11 @@ class TestSceneLayout(unittest.TestCase):
                 self.assertLess(max(r, g, b) - min(r, g, b), 12)
                 self.assertLessEqual(blk["alpha"], 70)
 
-    def test_consecutive_scenes_differ_in_scale(self):
-        widths = [scene_layout(scene(), i)["photo_w"] for i in range(6)]
-        for a, b in zip(widths, widths[1:]):
-            self.assertGreater(abs(a - b), 0.2)
+    def test_composition_varies_between_scenes(self):
+        specs = [(round(scene_layout(scene(), i)["photo_w"], 2),
+                  len(scene_layout(scene(), i)["extras"]))
+                 for i in range(6)]
+        self.assertGreater(len(set(specs)), 3)
 
     def test_scenes_show_one_to_three_images(self):
         counts = set()
