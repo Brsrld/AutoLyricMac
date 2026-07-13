@@ -9,6 +9,41 @@ so all logic is unit-testable without models.
 """
 
 
+def claude_translate_lines(lines, api_key, source_lang="auto"):
+    """High-quality lyric translation via the Anthropic API (optional).
+
+    Translates all lines in one request preserving poetic register; returns
+    a list of Turkish strings (same length) or raises on any failure so the
+    caller can fall back to Argos. The key comes from the Keychain and is
+    never logged.
+    """
+    import json as _json
+    import urllib.request as _rq
+
+    numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(lines))
+    body = _json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 2000,
+        "messages": [{"role": "user", "content":
+                      "Translate these song lyric lines to natural, poetic "
+                      "Turkish. Keep the meaning and emotional tone; do not "
+                      "explain. Reply with ONLY a JSON array of strings, one "
+                      f"per line, same order.\n\n{numbered}"}],
+    }).encode()
+    req = _rq.Request("https://api.anthropic.com/v1/messages", data=body,
+                      headers={"x-api-key": api_key,
+                               "anthropic-version": "2023-06-01",
+                               "content-type": "application/json"})
+    with _rq.urlopen(req, timeout=60) as resp:
+        payload = _json.loads(resp.read().decode())
+    text = payload["content"][0]["text"].strip()
+    start, end = text.find("["), text.rfind("]")
+    result = _json.loads(text[start:end + 1])
+    if not isinstance(result, list) or len(result) != len(lines):
+        raise ValueError("unexpected translation payload shape")
+    return [str(t).strip() for t in result]
+
+
 def _argos_translate(text, from_code, to_code="tr"):
     """Default translator backed by Argos; raises on missing pairs."""
     import argostranslate.translate as art

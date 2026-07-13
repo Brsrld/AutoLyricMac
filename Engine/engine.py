@@ -686,17 +686,44 @@ class Job:
         self.set(progress=0.85,
                  message="Adding Turkish translations (local)…")
         translated = 0
+        log = lambda m: print(f"[engine] job {self.id} translate: {m}",
+                              flush=True)
         try:
-            from lyrics.translate import (ensure_argos_pair,
+            from lyrics.translate import (claude_translate_lines,
+                                          ensure_argos_pair,
                                           fill_missing_translations)
-            log = lambda m: print(f"[engine] job {self.id} translate: {m}",
-                                  flush=True)
-            if ensure_argos_pair(source_lang, "tr", log=log):
+            from publish.youtube import Keychain
+            api_key = Keychain().get("anthropic_api_key")
+            if api_key and source_lang != "tr":
+                # high-quality LLM translation (never overwrites user edits)
+                refreshed = store.get_lyrics(self.source_job_id)
+                todo = [ln for ln in refreshed["lines"]
+                        if not ln.get("translation")
+                        and ln["display_text"].strip()]
+                if todo:
+                    log(f"translating {len(todo)} line(s) via Claude…")
+                    results = claude_translate_lines(
+                        [ln["display_text"] for ln in todo], api_key,
+                        source_lang)
+                    for ln, tr_text in zip(todo, results):
+                        if tr_text:
+                            store.update_line(self.source_job_id,
+                                              ln["line_index"],
+                                              translation=tr_text)
+                            translated += 1
+            elif ensure_argos_pair(source_lang, "tr", log=log):
                 translated, _ = fill_missing_translations(
                     store, self.source_job_id, source_lang, log=log)
         except Exception as exc:
-            print(f"[engine] job {self.id} translate: skipped ({exc})",
-                  flush=True)
+            log(f"Claude translation failed ({exc}); trying local Argos…")
+            try:
+                from lyrics.translate import (ensure_argos_pair,
+                                              fill_missing_translations)
+                if ensure_argos_pair(source_lang, "tr", log=log):
+                    translated, _ = fill_missing_translations(
+                        store, self.source_job_id, source_lang, log=log)
+            except Exception as exc2:
+                log(f"skipped ({exc2})")
 
         refreshed = store.get_lyrics(self.source_job_id)
         uncertain = sum(1 for ln in refreshed["lines"] if ln["uncertain"])
