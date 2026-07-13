@@ -359,11 +359,14 @@ def render_archive(plan, audio_path, out_path, progress=None):
                     {"media": {"file_path": rotated[0]}}, layouts[i], i,
                     rotated[1:]))
             # cadence: every beat when energetic, every 2nd beat when normal
-            gap = beat_period * (1.0 if band == "energetic" else 2.0)
+            gap = beat_period * (2.0 if band == "energetic" else 4.0)
             hits = (scene.get("motion", {}).get("onsets")
                     or scene.get("motion", {}).get("pulse_beats", []))
+            scene_len = max(0.001, scene["end"] - scene["start"])
             last = -10.0
             for b in hits:
+                if b < 1.1 or b > scene_len - 0.7:
+                    continue          # let the sentence settle / leave calmly
                 if b - last >= gap:
                     beats.append(b)
                     last = b
@@ -438,10 +441,11 @@ def render_archive(plan, audio_path, out_path, progress=None):
             tdur = float(trans.get("duration") or 0)
             if idx > 0 and tdur > 0 and t_local < tdur:
                 # refs breathe through white: most cuts become white fades
-                if trans.get("type") in ("crossfade", "block_wipe"):
-                    # transition length breathes with the tempo (~2 beats)
-                    tdur = max(0.9, min(1.5, 2.5 * beat_period))
-                    trans = {"type": "fade_white", "duration": tdur}
+                if trans.get("type") in ("crossfade", "block_wipe",
+                                         "layered_dissolve"):
+                    # continuous crossfade - motion never stalls
+                    tdur = max(0.5, min(0.9, 1.5 * beat_period))
+                    trans = {"type": "crossfade", "duration": tdur}
                 prev = scenes[idx - 1]
                 prev_len = max(0.001, prev["end"] - prev["start"])
                 prev_arr = _scene_frame(
