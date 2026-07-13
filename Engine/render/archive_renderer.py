@@ -327,12 +327,9 @@ def render_archive(plan, audio_path, out_path, progress=None):
 
     layouts = [scene_layout(s, i) for i, s in enumerate(scenes)]
     def pool_for(i):
-        paths = list(scenes[i].get("extra_media") or [])
-        for off in (1, 2, 3):
-            m = scenes[(i + off) % len(scenes)].get("media") or {}
-            if m.get("file_path"):
-                paths.append(m["file_path"])
-        return paths
+        # strictly the scene's OWN pool: an image shown in one scene must
+        # never appear again in another
+        return list(scenes[i].get("extra_media") or [])
 
     layers = [build_scene_layer(s, l, i, pool_for(i))
               for i, (s, l) in enumerate(zip(scenes, layouts))]
@@ -344,19 +341,12 @@ def render_archive(plan, audio_path, out_path, progress=None):
     for i, scene in enumerate(scenes):
         variants = [layers[i]]
         beats = []
-        if scene.get("energy_band") == "energetic" and len(scenes) > 1:
+        if scene.get("energy_band") == "energetic":
             own_pool = pool_for(i)
-            for p in (scene.get("extra_media") or [])[:2]:
+            for p in own_pool[:2]:
                 variants.append(build_scene_layer(
-                    {"media": {"file_path": p}}, layouts[i], i, own_pool))
-            for off in (1, 2):
-                if len(variants) >= 3:
-                    break
-                j = (i + off) % len(scenes)
-                if j != i and scenes[j].get("media"):
-                    variants.append(build_scene_layer(scenes[j],
-                                                      layouts[i], i,
-                                                      pool_for(j)))
+                    {"media": {"file_path": p}}, layouts[i], i,
+                    [q for q in own_pool if q != p]))
             last = -1.0
             for b in scene.get("motion", {}).get("pulse_beats", []):
                 if b - last >= 0.35:      # never strobe faster than ~3/s
