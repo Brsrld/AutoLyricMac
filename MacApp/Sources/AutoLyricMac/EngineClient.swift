@@ -406,14 +406,16 @@ final class EngineClient: ObservableObject {
 
     /// Build a scene plan from aligned lyrics + audio analysis.
     func createPlanJob(sourceJobId: String, style: String,
-                       segmentStart: Double, targetSeconds: Int) async throws -> String {
+                       segmentStart: Double, targetSeconds: Int,
+                       theme: String = "") async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "plan",
                                                      "source_job_id": sourceJobId,
                                                      "style": style,
                                                      "segment_start": segmentStart,
-                                                     "target_seconds": targetSeconds],
+                                                     "target_seconds": targetSeconds,
+                                                     "theme": theme],
                                               timeout: 15)
         return created.jobId
     }

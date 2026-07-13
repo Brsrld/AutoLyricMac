@@ -50,6 +50,7 @@ struct ContentView: View {
     @State private var manualLyricsDraft: String = ""
 
     // Scene plan & media (Phase 4)
+    @State private var planTheme: String = ""
     @State private var planStyle: String = "automatic"
     @State private var planJob: JobStatus?
     @State private var planTask: Task<Void, Never>?
@@ -532,7 +533,8 @@ struct ContentView: View {
                 status = try await awaitJob(
                     engine.createPlanJob(sourceJobId: sourceId, style: style,
                                          segmentStart: segmentStart,
-                                         targetSeconds: seconds)
+                                         targetSeconds: seconds,
+                                         theme: planTheme.trimmingCharacters(in: .whitespaces))
                 ) { planJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
                 let resolvedStyle = status.result?.style ?? "archiveCollage"
@@ -1005,6 +1007,11 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Scene Plan & Media")
                 .font(.headline)
+
+            TextField("Song theme / mood (optional — e.g. \"pişmanlık, geçen zaman, yalnızlık, karanlık şehir\")",
+                      text: $planTheme)
+                .textFieldStyle(.roundedBorder)
+                .help("Guides image search for every scene; rebuild the plan after changing it")
 
             HStack(spacing: 12) {
                 Picker("Plan style", selection: $planStyle) {
@@ -1761,11 +1768,13 @@ struct ContentView: View {
     private func startPlan() {
         guard let source = activeJob, source.state == "done" else { return }
         let segmentStart = analysisJob?.result?.segmentStart ?? 0
+        let theme = planTheme.trimmingCharacters(in: .whitespaces)
         runPlanJob("Scene plan") {
             try await engine.createPlanJob(sourceJobId: source.jobId,
                                            style: planStyle,
                                            segmentStart: segmentStart,
-                                           targetSeconds: durationSeconds)
+                                           targetSeconds: durationSeconds,
+                                           theme: theme)
         }
     }
 

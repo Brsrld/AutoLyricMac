@@ -861,6 +861,10 @@ class Job:
         title_hint = " ".join(filter(None, [
             project.get("title") or payload.get("title"),
             payload.get("artist")]))
+        theme = self.publish_meta.get("theme", "")
+        if theme:
+            # user-provided theme drives song-level queries + LLM directions
+            title_hint = f"{title_hint} — theme: {theme}" if title_hint else theme
         semantics_fn = None
         try:
             from publish.youtube import Keychain
@@ -1398,6 +1402,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         return
                     job = Job(kind="plan", source_job_id=source_id, style=style,
                               target_seconds=target, segment_start=seg_start)
+                    job.publish_meta = {
+                        "theme": str(body.get("theme") or "").strip()[:300]}
                 else:
                     raw_keys = body.get("api_keys")
                     if not isinstance(raw_keys, dict):
