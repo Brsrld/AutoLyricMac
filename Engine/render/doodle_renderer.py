@@ -108,10 +108,16 @@ def build_scene_background(scene, lut):
     strategy = (media.get("adaptation") or {}).get("strategy", "portrait_crop")
     frame = _adapted_full_frame(img, strategy, bw, bh)
 
+    # lively, colorful grade: boosted saturation and brightness with only a
+    # whisper of warmth — Doodle Memory is the cheerful, playful style
+    from PIL import ImageEnhance
+    frame = ImageEnhance.Color(frame).enhance(1.35)
+    frame = ImageEnhance.Brightness(frame).enhance(1.06)
+    frame = ImageEnhance.Contrast(frame).enhance(1.08)
     gray = np.asarray(frame.convert("L"))
     warm = apply_lut(posterize_levels(gray, levels=24), lut).astype(np.float32)
     color = np.asarray(frame, dtype=np.float32)
-    blended = np.clip(warm * 0.72 + color * 0.28, 0, 255).astype(np.uint8)
+    blended = np.clip(color * 0.85 + warm * 0.15, 0, 255).astype(np.uint8)
     return Image.fromarray(blended)
 
 
@@ -127,7 +133,7 @@ def _fade_alpha(img, alpha):
     return faded
 
 
-def _bounce(t, pulse_beats, amp=5.0, decay=0.16):
+def _bounce(t, pulse_beats, amp=9.0, decay=0.18):
     for b in pulse_beats:
         dt = t - b
         if 0.0 <= dt < decay:
@@ -200,7 +206,7 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
         pulses = scene.get("motion", {}).get("pulse_beats", [])
 
         bg = backgrounds[idx]
-        z = 1.0 + 0.02 * ease_in_out(local)
+        z = 1.0 + 0.035 * ease_in_out(local)
         lw, lh = bg.size
         cw, ch = min(int(lw / z), lw), min(int(lh / z), lh)
         cx = (lw - cw) / 2
@@ -211,8 +217,8 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
 
         # doodle: slide-in entrance, breathe, beat micro-bounce
         sprite, layout = prep["sprite"], prep["layout"]
-        enter = ease_in_out(min(1.0, t_local / 0.35))
-        breathe = 1.0 + 0.015 * math.sin(2 * math.pi * t_local / 3.0)
+        enter = ease_in_out(min(1.0, t_local / 0.3))
+        breathe = 1.0 + 0.028 * math.sin(2 * math.pi * t_local / 1.8)
         dh = int(layout["height_frac"] * H * breathe)
         dw = int(dh * sprite.width / sprite.height)
         scaled = sprite.resize((max(1, dw), max(1, dh)), Image.BILINEAR)
