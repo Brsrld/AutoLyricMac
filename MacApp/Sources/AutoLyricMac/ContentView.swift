@@ -140,10 +140,8 @@ struct ContentView: View {
                     segmentSection
                     Divider()
                     lyricsSection
-                    if lyrics?.aligned == true {
-                        Divider()
-                        planSection
-                    }
+                    Divider()
+                    planSection
                 }
 
                 Divider()
@@ -1090,16 +1088,24 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
                 .help("Guides image search for every scene; rebuild the plan after changing it")
 
+            if lyrics?.aligned != true {
+                Text("Önce sözleri getirip Align Words'ü çalıştır — plan hizalanmış sözlerden kurulur.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             HStack(spacing: 12) {
                 Picker("Plan style", selection: $planStyle) {
                     Text("Automatic").tag("automatic")
                     Text("Archive Collage").tag("archiveCollage")
                     Text("Doodle Memory").tag("doodleMemory")
+                    Text("Polaroid Wall").tag("polaroidWall")
+                    Text("Minimal Dark").tag("minimalDark")
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(maxWidth: 380)
+                .fixedSize()
                 Button("Build Scene Plan") { startPlan() }
+                    .disabled(lyrics?.aligned != true)
                     .disabled(engine.status != .connected || planJobRunning
                               || analysisJob?.state != "done")
                 Button("Fetch Licensed Media") { startMediaFetch() }
