@@ -110,6 +110,9 @@ class TempObjectStore:
                                     data or b"").hexdigest())
         if data is not None:
             headers["Content-Type"] = "video/mp4"
+        if self.opener is urllib.request.urlopen:
+            # system curl trusts the local TLS chain (AV interception etc.)
+            return self._request_curl(method, url, headers, data)
         req = urllib.request.Request(url, data=data, headers=headers,
                                      method=method)
         try:
@@ -121,6 +124,36 @@ class TempObjectStore:
         except urllib.error.URLError as exc:
             raise PublishError(f"Could not reach object storage: "
                                f"{exc.reason}") from exc
+
+    def _request_curl(self, method, url, headers, data):
+        import subprocess
+        import tempfile
+        cmd = ["/usr/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+               "-X", method, "--max-time", "300"]
+        for name, value in headers.items():
+            cmd += ["-H", f"{name}: {value}"]
+        tmp = None
+        if data is not None:
+            tmp = tempfile.NamedTemporaryFile(delete=False)
+            tmp.write(data)
+            tmp.close()
+            cmd += ["--data-binary", f"@{tmp.name}"]
+        cmd.append(url)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    timeout=320)
+        finally:
+            if tmp is not None:
+                import os
+                os.unlink(tmp.name)
+        code = int(result.stdout.strip() or 0)
+        if result.returncode != 0:
+            raise PublishError(f"Could not reach object storage "
+                               f"(curl {result.returncode}).")
+        if code >= 300:
+            raise PublishError(f"Object storage {method} failed "
+                               f"(HTTP {code}).")
+        return code
 
     def upload(self, file_path, key):
         data = open(file_path, "rb").read()
