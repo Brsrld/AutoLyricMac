@@ -532,7 +532,7 @@ final class EngineClient: ObservableObject {
     /// Publish a rendered output to YouTube (official Data API).
     func createPublishJob(sourceJobId: String, outputPath: String,
                           title: String, description: String,
-                          privacy: String) async throws -> String {
+                          privacy: String, tags: [String] = []) async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "publish_youtube",
@@ -540,7 +540,8 @@ final class EngineClient: ObservableObject {
                                                      "output_path": outputPath,
                                                      "title": title,
                                                      "description": description,
-                                                     "privacy": privacy],
+                                                     "privacy": privacy,
+                                                     "tags": tags],
                                               timeout: 15)
         return created.jobId
     }

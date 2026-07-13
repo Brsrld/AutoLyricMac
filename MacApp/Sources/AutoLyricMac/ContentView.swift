@@ -81,6 +81,7 @@ struct ContentView: View {
     @State private var youtubeFlowMessage: String?
     @State private var publishTitle: String = ""
     @State private var publishDescription: String = ""
+    @State private var publishTags: String = ""
     @State private var publishPrivacy: String = "private"
     @State private var publishedURL: String?
 
@@ -1299,7 +1300,9 @@ struct ContentView: View {
                 }
                 TextField("Video title", text: $publishTitle)
                     .textFieldStyle(.roundedBorder)
-                TextField("Description (optional)", text: $publishDescription)
+                TextField("Açıklama (postun altındaki yazı)", text: $publishDescription)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Etiketler — #lyrics #nostalji #keşfet gibi", text: $publishTags)
                     .textFieldStyle(.roundedBorder)
                 HStack(spacing: 12) {
                     Picker("Privacy", selection: $publishPrivacy) {
@@ -1426,7 +1429,7 @@ struct ContentView: View {
     private func startInstagramPublish(outputPath: String) {
         guard let source = activeJob, source.state == "done" else { return }
         publishedURL = nil
-        let caption = [publishTitle, publishDescription]
+        let caption = [publishTitle, publishDescription, hashtagLine]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
         runPlanJob("Instagram publish") {
             try await engine.createInstagramPublishJob(
@@ -1483,18 +1486,31 @@ struct ContentView: View {
         }
     }
 
+    private var parsedTags: [String] {
+        publishTags.split(whereSeparator: { " ,\n".contains($0) })
+            .map { $0.hasPrefix("#") ? String($0.dropFirst()) : String($0) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var hashtagLine: String {
+        parsedTags.map { "#\($0)" }.joined(separator: " ")
+    }
+
     private func startPublish(outputPath: String) {
         guard let source = activeJob, source.state == "done" else { return }
         publishedURL = nil
         let title = publishTitle.trimmingCharacters(in: .whitespaces)
-        let description = publishDescription
+        let description = [publishDescription, hashtagLine]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
         let privacy = publishPrivacy
+        let tags = parsedTags
         runPlanJob("YouTube publish") {
             try await engine.createPublishJob(sourceJobId: source.jobId,
                                               outputPath: outputPath,
                                               title: title,
                                               description: description,
-                                              privacy: privacy)
+                                              privacy: privacy,
+                                              tags: tags)
         }
     }
 
