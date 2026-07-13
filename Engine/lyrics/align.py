@@ -46,7 +46,10 @@ def _decode_pcm(audio_path, ffmpeg, sr=16000):
 
 def transcribe_words(audio_path, model=DEFAULT_MODEL, language=None,
                      ffmpeg="ffmpeg"):
-    """Recognized words: [{"text", "start", "end", "prob"}], ordered by time."""
+    """Recognized words + detected language.
+
+    Returns ([{"text", "start", "end", "prob"}], language_code).
+    """
     import mlx_whisper  # lazy: only the align job needs it
 
     audio = _decode_pcm(audio_path, ffmpeg)
@@ -65,7 +68,7 @@ def transcribe_words(audio_path, model=DEFAULT_MODEL, language=None,
                 "end": float(w["end"]),
                 "prob": float(w.get("probability", 1.0)),
             })
-    return words
+    return words, result.get("language") or language or "en"
 
 
 # ---------------------------------------------------------------------------

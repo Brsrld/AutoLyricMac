@@ -25,8 +25,8 @@ from media.crop import subject_crop
 from proto_common import (FPS, H, W, VideoWriter, apply_lut, cover_resize,
                           ease_in_out, make_grain_frames, posterize_levels,
                           vignette_map, warm_memory_lut)
-from subtitles.layout import Rect, place_block
-from subtitles.render import build_doodle_words
+from subtitles.layout import SAFE_ZONE, Rect, place_block
+from subtitles.render import build_doodle_translation, build_doodle_words
 
 OVERSIZE = 1.08
 
@@ -159,6 +159,7 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
         d_rect = doodle_screen_rect(layout, sprite.width / sprite.height)
 
         stickers = None
+        translation = None
         if scene.get("lyric"):
             words = words_by_line.get(scene.get("line_index"), [])
             items, size = build_doodle_words(
@@ -166,12 +167,21 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
                 seed=i, uncertain=bool(scene.get("uncertain")))
             if items:
                 band = (scene.get("subtitle") or {}).get("band", "lower")
-                s_rect = place_block(size, avoid=[d_rect], preferred=band,
-                                     seed=i)
+                tr_block = build_doodle_translation(scene.get("translation"),
+                                                    seed=i)
+                tr_h = (tr_block.height + 10) if tr_block else 0
+                s_rect = place_block((size[0], size[1] + tr_h),
+                                     avoid=[d_rect], preferred=band, seed=i)
                 word_times = [w.get("start") for w in words] if words else []
                 stickers = (items, s_rect, word_times)
+                if tr_block:
+                    tr_x = s_rect.x + (s_rect.w - tr_block.width) / 2
+                    tr_x = min(max(tr_x, SAFE_ZONE.x),
+                               SAFE_ZONE.right - tr_block.width)
+                    translation = (tr_block,
+                                   (int(tr_x), int(s_rect.y + size[1] + 10)))
         prepared.append({"name": name, "sprite": sprite, "layout": layout,
-                         "stickers": stickers})
+                         "stickers": stickers, "translation": translation})
 
     grain = make_grain_frames(strength=4.0)
     vig = vignette_map(0.14)
@@ -231,6 +241,15 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
                 frame.paste(faded,
                             (int(s_rect.x + dx),
                              int(s_rect.y + dy + (1 - pop) * 8)), faded)
+
+        # Turkish translation strip under the original words
+        if prep["translation"]:
+            tr_block, (tx, ty) = prep["translation"]
+            exit_ = min(1.0, max(0.0, (scene["end"] - t) / 0.2))
+            tr_alpha = ease_in_out(min(1.0, t_local / 0.4)) * exit_
+            if tr_alpha > 0.01:
+                faded = _fade_alpha(tr_block, tr_alpha)
+                frame.paste(faded, (tx, ty), faded)
         return np.asarray(frame, dtype=np.float32)
 
     writer = VideoWriter(out_path, audio_path, audio_offset=seg_start,

@@ -657,23 +657,44 @@ class Job:
         self.set(state="analyzing", progress=0.1,
                  message="Transcribing vocals (local Whisper)…")
         try:
-            asr_words = transcribe_words(source_audio, ffmpeg=FFMPEG)
+            asr_words, source_lang = transcribe_words(source_audio,
+                                                      ffmpeg=FFMPEG)
         except Exception as exc:
             self.fail("align_failed", f"Transcription failed: {exc}")
             return
         self._check_cancel()
 
-        self.set(progress=0.85, message="Aligning lyrics to audio…")
+        self.set(progress=0.7, message="Aligning lyrics to audio…")
         line_texts = [ln["display_text"] for ln in payload["lines"]]
         aligned, matched_ratio, mean_confidence = align_lyrics(line_texts,
                                                                asr_words)
         store.apply_alignment(self.source_job_id, aligned, matched_ratio,
                               mean_confidence)
+
+        # Turkish translation is always added under the original (local
+        # Argos models; user-entered translations are never overwritten)
+        self.set(progress=0.85,
+                 message="Adding Turkish translations (local)…")
+        translated = 0
+        try:
+            from lyrics.translate import (ensure_argos_pair,
+                                          fill_missing_translations)
+            log = lambda m: print(f"[engine] job {self.id} translate: {m}",
+                                  flush=True)
+            if ensure_argos_pair(source_lang, "tr", log=log):
+                translated, _ = fill_missing_translations(
+                    store, self.source_job_id, source_lang, log=log)
+        except Exception as exc:
+            print(f"[engine] job {self.id} translate: skipped ({exc})",
+                  flush=True)
+
         refreshed = store.get_lyrics(self.source_job_id)
         uncertain = sum(1 for ln in refreshed["lines"] if ln["uncertain"])
         suspect = refreshed["suspect"]
         message = (f"Alignment done: {matched_ratio:.0%} of words matched, "
                    f"{uncertain} uncertain line(s).")
+        if translated:
+            message += f" {translated} line(s) translated to Turkish."
         if suspect:
             message += " Lyrics may not match this recording — please review."
         self.set(state="done", progress=1.0, message=message,
@@ -683,6 +704,8 @@ class Job:
                      "uncertain_lines": uncertain,
                      "suspect": suspect,
                      "asr_word_count": len(asr_words),
+                     "language": source_lang,
+                     "translated_lines": translated,
                  })
 
     def _run_subtitle_preview(self):

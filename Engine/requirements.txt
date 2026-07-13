@@ -12,3 +12,6 @@ soundfile>=0.12
 # (mlx-community/whisper-base-mlx, ~150 MB) download on first use with
 # explicit user approval.
 mlx-whisper>=0.4
+# Automatic Turkish translation — local/offline Argos models (no LLM/API);
+# language-pair models (~200 MB each) download once on first use.
+argostranslate>=1.9

@@ -136,6 +136,31 @@ def build_doodle_words(words, seed=0, uncertain=False,
     return [(s, off, wi) for s, off, wi in items], (width, height)
 
 
+def build_doodle_translation(text, seed=0, max_width=int(SAFE_ZONE.w * 0.86)):
+    """Smaller handwritten Turkish strip stacked under the word block."""
+    if not (text or "").strip():
+        return None
+    size = 44
+    measure = _measurer(FONT_HAND, size)
+    strips = []
+    for i, line in enumerate(wrap_text(text, max_width - 32, measure)):
+        strips.append(paper_sticker(
+            line, FONT_HAND, size, text_fill=(58, 74, 120),
+            bg=(252, 250, 246), pad=(18, 8),
+            rotation=(1.2, -0.8, 0.5)[(seed + i) % 3],
+            seed=seed * 71 + i + 500, jitter=3))
+    if not strips:
+        return None
+    width = max(s.width for s in strips)
+    height = sum(s.height for s in strips) - 6 * (len(strips) - 1)
+    block = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    y = 0
+    for s in strips:
+        block.alpha_composite(s, ((width - s.width) // 2, y))
+        y += s.height - 6
+    return block
+
+
 # ---------------------------------------------------------------------------
 # Preview renderer
 # ---------------------------------------------------------------------------
@@ -194,11 +219,17 @@ def render_subtitle_preview(style, lines, audio_path, out_path,
                 seed=li, uncertain=uncertain)
             if not stickers:
                 continue
-            rect = place_block(size, preferred=preferred, seed=li)
+            tr_block = build_doodle_translation(line.get("translation"),
+                                                seed=li)
+            tr_h = (tr_block.height + 10) if tr_block else 0
+            rect = place_block((size[0], size[1] + tr_h),
+                               preferred=preferred, seed=li)
             word_times = [w.get("start") for w in words] if words else []
             prepared.append({"kind": "words", "stickers": stickers,
                              "rect": rect, "line": line,
-                             "word_times": word_times})
+                             "word_times": word_times,
+                             "translation": tr_block,
+                             "words_height": size[1]})
         else:
             block, size = build_archive_subtitle(
                 text, line.get("translation"), seed=li, uncertain=uncertain)
@@ -248,6 +279,12 @@ def render_subtitle_preview(style, lines, audio_path, out_path,
                         _alpha_composite_into(
                             frame, sticker, rect.x + dx,
                             rect.y + dy + rise + (1 - pop) * 10, alpha * pop)
+                    if item.get("translation") is not None:
+                        tr = item["translation"]
+                        tx = rect.x + (rect.w - tr.width) / 2
+                        _alpha_composite_into(
+                            frame, tr, tx,
+                            rect.y + item["words_height"] + 10 + rise, alpha)
             arr = frame.astype(np.float32)
             arr *= vig
             arr += grain[n % len(grain)]
