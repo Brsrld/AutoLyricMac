@@ -224,6 +224,53 @@ def extract_semantics(text):
     }
 
 
+def claude_semantics(line_texts, title_hint, api_key):
+    """Optional LLM semantics: per-line emotion/subjects/stock queries.
+
+    One batched request; returns {line_text: semantics_dict} shaped exactly
+    like extract_semantics output. Raises on any failure so the caller
+    falls back to the lexicon.
+    """
+    import json
+    import urllib.request
+
+    numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(line_texts))
+    prompt = (
+        f"Song: {title_hint or 'unknown'}\nLyric lines:\n{numbered}\n\n"
+        "For EACH line, give visual direction for a licensed stock-photo "
+        "search that captures the line's meaning and the song's mood. "
+        "Reply ONLY with a JSON array; element i for line i+1: "
+        '{"emotion": one of ' + str(list(EMOTIONS)) + ', '
+        '"subjects": [1-3 short nouns], '
+        '"queries": [3 concrete English stock-photo search phrases, '
+        "cinematic, no text/logos]}")
+    body = json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 4000,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body,
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        payload = json.loads(resp.read().decode())
+    text = payload["content"][0]["text"]
+    items = json.loads(text[text.find("["):text.rfind("]") + 1])
+    if len(items) != len(line_texts):
+        raise ValueError("semantic payload length mismatch")
+    out = {}
+    for line, item in zip(line_texts, items):
+        emotions = {e: 0.0 for e in EMOTIONS}
+        if item.get("emotion") in emotions:
+            emotions[item["emotion"]] = 1.0
+        out[line] = {"subjects": [str(s) for s in item.get("subjects", [])][:4],
+                     "emotions": emotions,
+                     "queries": [str(q) for q in item.get("queries", [])][:4],
+                     "matched": ["llm"]}
+    return out
+
+
 def dominant_emotion(emotions):
     """Highest-scoring emotion name, or 'neutral' when nothing scored."""
     if not emotions or all(v == 0 for v in emotions.values()):

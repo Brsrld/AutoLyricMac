@@ -861,8 +861,25 @@ class Job:
         title_hint = " ".join(filter(None, [
             project.get("title") or payload.get("title"),
             payload.get("artist")]))
+        semantics_fn = None
+        try:
+            from publish.youtube import Keychain
+            api_key = Keychain().get("anthropic_api_key")
+            if api_key:
+                from plan.semantic import claude_semantics, extract_semantics
+                texts = sorted({ln["display_text"] for ln in payload["lines"]
+                                if ln["display_text"].strip()})
+                lut = claude_semantics(texts, title_hint, api_key)
+                semantics_fn = lambda t: lut.get(t) or extract_semantics(t)
+                print(f"[engine] job {self.id} plan: Claude semantics for "
+                      f"{len(lut)} line(s)", flush=True)
+        except Exception as exc:
+            print(f"[engine] job {self.id} plan: LLM semantics unavailable "
+                  f"({exc}); using lexicon", flush=True)
+        kwargs = {"semantics_fn": semantics_fn} if semantics_fn else {}
         plan = build_scene_plan(payload["lines"], analysis, self.style,
-                                seg_start, seg_end, title_hint=title_hint)
+                                seg_start, seg_end, title_hint=title_hint,
+                                **kwargs)
         plan["source_job_id"] = self.source_job_id
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
