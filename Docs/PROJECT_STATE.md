@@ -107,9 +107,22 @@ corrections persist (Phase 3 store); regenerate produced 4/4 brand-new
 assets with exclusions honored; cleanup removed an orphan job dir and a
 stale preview while the active project and all rendered videos survived.
 
-## Next: Phase 8 — YouTube publishing
+## Phase 8 — YouTube publishing (implemented; live test pending user)
 
-Official OAuth 2.0 + Data API, connect/disconnect, refresh tokens in
-Keychain, progress, metadata/privacy selection, private/unlisted test
-upload, result URL, retryable errors. Needs a Google Cloud project +
-OAuth client from the user when ready to test.
+Official OAuth 2.0 (PKCE + loopback redirect on 127.0.0.1:8767) with
+tokens in Keychain, resumable uploads with retry/backoff and progress,
+privacy selection, publish history, result URL in the app. Offline tests
+cover the whole flow with injected transport; endpoint smoke test passed
+(400s, path safety, not-connected error).
+**Pending (needs the user):** create a Google Cloud project, enable the
+YouTube Data API v3, create an OAuth client (type: Desktop app), then in
+the app open Publish → Connect YouTube, paste client id/secret, sign in,
+and run one private test upload. Cost: free quota (uploads cost ~1600
+quota units of the 10k/day default). Revocation: Google Account →
+Security → Third-party access; Disconnect in the app deletes tokens.
+
+## Next: Phase 9 — Instagram publishing
+
+Official Meta Graph API with an eligible professional account, temporary
+HTTPS object storage (S3-compatible adapter), container publish/poll,
+cleanup. Needs Meta developer app + eligible account when ready to test.
