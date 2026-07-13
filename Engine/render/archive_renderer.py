@@ -288,6 +288,27 @@ def render_archive(plan, audio_path, out_path, progress=None):
     layers = [build_scene_layer(s, l, i)
               for i, (s, l) in enumerate(zip(scenes, layouts))]
 
+    # rhythm-driven image swaps: energetic lines cycle neighbouring photos
+    # behind the lyric on the beat (reference-video behaviour)
+    variant_layers = []
+    swap_beats = []
+    for i, scene in enumerate(scenes):
+        variants = [layers[i]]
+        beats = []
+        if scene.get("energy_band") == "energetic" and len(scenes) > 1:
+            for off in (1, 2):
+                j = (i + off) % len(scenes)
+                if j != i and scenes[j].get("media"):
+                    variants.append(build_scene_layer(scenes[j],
+                                                      layouts[i], i))
+            last = -1.0
+            for b in scene.get("motion", {}).get("pulse_beats", []):
+                if b - last >= 0.35:      # never strobe faster than ~3/s
+                    beats.append(b)
+                    last = b
+        variant_layers.append(variants)
+        swap_beats.append(beats)
+
     # subtitles: one block per lyric scene, placed away from the photo
     subtitles = []
     for i, scene in enumerate(scenes):
@@ -332,7 +353,11 @@ def render_archive(plan, audio_path, out_path, progress=None):
             local = t_local / scene_len
             pulses = scene.get("motion", {}).get("pulse_beats", [])
 
-            arr = _scene_frame(layers[idx], layout, local, scene_len,
+            layer = variant_layers[idx][0]
+            if len(variant_layers[idx]) > 1 and swap_beats[idx]:
+                passed = sum(1 for b in swap_beats[idx] if b <= t_local)
+                layer = variant_layers[idx][passed % len(variant_layers[idx])]
+            arr = _scene_frame(layer, layout, local, scene_len,
                                t_local, pulses)
 
             # incoming transition from the previous scene
