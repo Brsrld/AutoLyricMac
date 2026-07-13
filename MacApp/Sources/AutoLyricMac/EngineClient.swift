@@ -107,6 +107,8 @@ struct JobResult: Decodable, Equatable {
     let fetchedCount: Int?
     let providerErrors: [String]?
     let sceneErrors: [String]?
+    // publish (Phase 8)
+    let videoUrl: String?
 }
 
 /// Adaptation decision for one media asset (never stretch).
@@ -473,6 +475,55 @@ final class EngineClient: ObservableObject {
         request.timeoutInterval = 10
         let (data, response) = try await URLSession.shared.data(for: request)
         return try Self.decode(data: data, response: response)
+    }
+
+    /// Begin the official YouTube OAuth flow; returns the URL to open in
+    /// the browser and a state token for polling.
+    func youtubeConnect(clientId: String, clientSecret: String) async throws -> (authURL: String, state: String) {
+        struct Response: Decodable { let authUrl: String; let state: String }
+        let response: Response = try await post(path: "youtube/connect",
+                                                body: ["client_id": clientId,
+                                                       "client_secret": clientSecret],
+                                                timeout: 15)
+        return (response.authUrl, response.state)
+    }
+
+    struct YouTubeStatus: Decodable {
+        struct Flow: Decodable { let status: String; let message: String }
+        let connected: Bool
+        let flow: Flow?
+    }
+
+    func youtubeStatus(state: String? = nil) async throws -> YouTubeStatus {
+        var components = URLComponents(url: baseURL.appendingPathComponent("youtube/status"),
+                                       resolvingAgainstBaseURL: false)!
+        if let state { components.queryItems = [.init(name: "state", value: state)] }
+        var request = URLRequest(url: components.url!)
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try Self.decode(data: data, response: response)
+    }
+
+    func youtubeDisconnect() async throws {
+        struct Response: Decodable { let connected: Bool }
+        let _: Response = try await post(path: "youtube/disconnect", body: [:],
+                                         timeout: 10)
+    }
+
+    /// Publish a rendered output to YouTube (official Data API).
+    func createPublishJob(sourceJobId: String, outputPath: String,
+                          title: String, description: String,
+                          privacy: String) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "publish_youtube",
+                                                     "source_job_id": sourceJobId,
+                                                     "output_path": outputPath,
+                                                     "title": title,
+                                                     "description": description,
+                                                     "privacy": privacy],
+                                              timeout: 15)
+        return created.jobId
     }
 
     func jobStatus(id: String) async throws -> JobStatus {

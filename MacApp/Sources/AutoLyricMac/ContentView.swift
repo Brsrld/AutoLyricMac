@@ -63,6 +63,16 @@ struct ContentView: View {
     @State private var historyLoaded = false
     @State private var cleanupMessage: String?
 
+    // YouTube publishing (Phase 8)
+    @State private var youtubeConnected = false
+    @State private var youtubeClientId: String = ""
+    @State private var youtubeClientSecret: String = ""
+    @State private var youtubeFlowMessage: String?
+    @State private var publishTitle: String = ""
+    @State private var publishDescription: String = ""
+    @State private var publishPrivacy: String = "private"
+    @State private var publishedURL: String?
+
     private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
@@ -822,6 +832,7 @@ struct ContentView: View {
                     }
                     .controlSize(.small)
                 }
+                publishSection(outputPath: path)
             }
 
             if let plan {
@@ -940,6 +951,145 @@ struct ContentView: View {
             .padding(.leading, 94)
         }
         .padding(.vertical, 2)
+    }
+
+    // MARK: - YouTube publishing (Phase 8)
+
+    @ViewBuilder
+    private func publishSection(outputPath: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Publish to YouTube")
+                .font(.subheadline.weight(.semibold))
+            if !youtubeConnected {
+                DisclosureGroup("Connect YouTube (official Google OAuth)") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Create an OAuth client (Desktop app) in Google Cloud Console with the YouTube Data API enabled, then paste its credentials. Tokens are stored in your Keychain.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("OAuth client ID", text: $youtubeClientId)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("OAuth client secret", text: $youtubeClientSecret)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Connect…") { startYouTubeConnect() }
+                            .disabled(youtubeClientId.isEmpty
+                                      || youtubeClientSecret.isEmpty)
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.callout)
+            } else {
+                HStack(spacing: 12) {
+                    Label("YouTube connected", systemImage: "checkmark.seal.fill")
+                        .font(.callout)
+                        .foregroundStyle(.green)
+                    Button("Disconnect") {
+                        Task {
+                            try? await engine.youtubeDisconnect()
+                            youtubeConnected = false
+                            AppLog.shared.append("YouTube disconnected.")
+                        }
+                    }
+                    .controlSize(.small)
+                }
+                TextField("Video title", text: $publishTitle)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Description (optional)", text: $publishDescription)
+                    .textFieldStyle(.roundedBorder)
+                HStack(spacing: 12) {
+                    Picker("Privacy", selection: $publishPrivacy) {
+                        Text("Private").tag("private")
+                        Text("Unlisted").tag("unlisted")
+                        Text("Public").tag("public")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 280)
+                    Button("Publish") { startPublish(outputPath: outputPath) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(planJobRunning
+                                  || publishTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            if let message = youtubeFlowMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let published = publishedURL, let url = URL(string: published) {
+                HStack(spacing: 8) {
+                    Link(published, destination: url)
+                        .font(.callout)
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(published, forType: .string)
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .onAppear { refreshYouTubeStatus() }
+    }
+
+    private func refreshYouTubeStatus() {
+        Task {
+            if let status = try? await engine.youtubeStatus() {
+                youtubeConnected = status.connected
+            }
+            if publishTitle.isEmpty {
+                publishTitle = [lyricArtist, lyricTitle]
+                    .filter { !$0.isEmpty }.joined(separator: " – ")
+            }
+        }
+    }
+
+    private func startYouTubeConnect() {
+        let clientId = youtubeClientId.trimmingCharacters(in: .whitespaces)
+        let secret = youtubeClientSecret.trimmingCharacters(in: .whitespaces)
+        youtubeFlowMessage = "Opening Google sign-in in your browser…"
+        Task {
+            do {
+                let flow = try await engine.youtubeConnect(clientId: clientId,
+                                                           clientSecret: secret)
+                if let url = URL(string: flow.authURL) {
+                    NSWorkspace.shared.open(url)
+                }
+                for _ in 0..<150 {   // poll up to ~5 minutes
+                    try? await Task.sleep(for: .seconds(2))
+                    guard let status = try? await engine.youtubeStatus(state: flow.state) else { continue }
+                    if let flowState = status.flow, flowState.status != "pending" {
+                        youtubeConnected = status.connected
+                        youtubeFlowMessage = flowState.message
+                        if status.connected {
+                            youtubeClientSecret = ""
+                            AppLog.shared.append("YouTube connected via OAuth.")
+                        }
+                        return
+                    }
+                }
+                youtubeFlowMessage = "Authorization timed out."
+            } catch let error as EngineAPIError {
+                youtubeFlowMessage = error.errorDescription
+            } catch {
+                youtubeFlowMessage = "Could not start the OAuth flow."
+            }
+        }
+    }
+
+    private func startPublish(outputPath: String) {
+        guard let source = activeJob, source.state == "done" else { return }
+        publishedURL = nil
+        let title = publishTitle.trimmingCharacters(in: .whitespaces)
+        let description = publishDescription
+        let privacy = publishPrivacy
+        runPlanJob("YouTube publish") {
+            try await engine.createPublishJob(sourceJobId: source.jobId,
+                                              outputPath: outputPath,
+                                              title: title,
+                                              description: description,
+                                              privacy: privacy)
+        }
     }
 
     private var logSection: some View {
@@ -1252,6 +1402,10 @@ struct ContentView: View {
                         AppLog.shared.append("\(description) \(status.state): \(status.message)")
                         if status.state == "done", let source = activeJob {
                             plan = try? await engine.fetchPlan(sourceJobId: source.jobId)
+                        }
+                        if status.state == "done",
+                           let url = status.result?.videoUrl {
+                            publishedURL = url
                         }
                         break
                     }

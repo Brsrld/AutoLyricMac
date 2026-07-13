@@ -59,6 +59,64 @@ MIN_FREE_BYTES = 500 * 1024 * 1024
 JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
+# in-flight OAuth flows: state -> {"status": pending|connected|error, ...}
+OAUTH_FLOWS = {}
+
+
+def start_oauth_listener(client_id, client_secret, verifier, state):
+    """One-shot loopback listener that finishes the YouTube OAuth flow."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from publish.youtube import (REDIRECT_PORT, PublishError,
+                                 YouTubeConnector, exchange_code,
+                                 parse_redirect)
+
+    class RedirectHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            try:
+                code = parse_redirect(self.path, state)
+                tokens = exchange_code(client_id, client_secret, code,
+                                       verifier)
+                refresh = tokens.get("refresh_token")
+                if not refresh:
+                    raise PublishError(
+                        "Google returned no refresh token. Remove the app at "
+                        "myaccount.google.com/permissions and connect again.")
+                YouTubeConnector().store_connection(client_id, client_secret,
+                                                    refresh)
+                OAUTH_FLOWS[state] = {"status": "connected",
+                                      "message": "YouTube connected."}
+                body, status = ("<html><body style='font-family:sans-serif'>"
+                                "<h3>AutoLyricMac is connected to YouTube."
+                                "</h3><p>You can close this window.</p>"
+                                "</body></html>"), 200
+            except PublishError as exc:
+                OAUTH_FLOWS[state] = {"status": "error", "message": str(exc)}
+                body, status = (f"<html><body><h3>Connection failed</h3>"
+                                f"<p>{exc}</p></body></html>"), 400
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+        def log_message(self, *args):
+            pass  # never log OAuth query strings
+
+    server = HTTPServer(("127.0.0.1", REDIRECT_PORT), RedirectHandler)
+    server.timeout = 300
+
+    def serve_once():
+        try:
+            server.handle_request()
+        finally:
+            server.server_close()
+        if OAUTH_FLOWS.get(state, {}).get("status") == "pending":
+            OAUTH_FLOWS[state] = {"status": "error",
+                                  "message": "Authorization timed out."}
+
+    threading.Thread(target=serve_once, daemon=True).start()
+
 HEALTH_PAYLOAD = {"status": "ok", "version": ENGINE_VERSION}
 
 
@@ -206,6 +264,7 @@ class Job:
         self.api_keys = api_keys or {}
         self.regenerate = False          # media job: refetch every scene
         self.exclude_assets = []         # media job: [(provider, ref), ...]
+        self.publish_meta = {}           # publish job: title/desc/privacy
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
         self.message = "Queued"
@@ -258,6 +317,8 @@ class Job:
                 self._run_media()
             elif self.kind == "render":
                 self._run_render()
+            elif self.kind == "publish_youtube":
+                self._run_publish_youtube()
             else:
                 self._run_pipeline()
         except CancelledError:
@@ -941,6 +1002,49 @@ class Job:
                          "scene_count": len(plan["scenes"]),
                          "style": self.style})
 
+    def _run_publish_youtube(self):
+        """Upload a rendered output via the official YouTube Data API."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from publish.youtube import PublishError, YouTubeConnector
+
+        video = Path(self.url or "")
+        try:
+            video.resolve().relative_to(VIDEO_OUTPUT_DIR.resolve())
+        except ValueError:
+            self.fail("invalid_request",
+                      "Only rendered videos in Output/videos can be published.")
+            return
+        if not video.is_file():
+            self.fail("not_found", "The rendered video file was not found.")
+            return
+
+        def progress(frac):
+            self._check_cancel()
+            self.set(progress=0.1 + 0.85 * frac,
+                     message=f"Uploading to YouTube… {int(frac * 100)}%")
+
+        self.set(state="downloading", progress=0.05,
+                 message="Starting YouTube upload…")
+        connector = YouTubeConnector()
+        meta = self.publish_meta
+        try:
+            url = connector.publish(
+                video, title=meta.get("title") or video.stem,
+                description=meta.get("description", ""),
+                tags=meta.get("tags", []),
+                privacy=meta.get("privacy", "private"),
+                progress=progress)
+        except PublishError as exc:
+            self.fail("publish_failed", str(exc))
+            return
+        from projects import ProjectStore
+        ProjectStore(PROJECTS_DB_PATH).record_publish(
+            self.source_job_id or "0" * 32, "youtube", url,
+            privacy=meta.get("privacy", "private"))
+        self.set(state="done", progress=1.0,
+                 message=f"Published to YouTube ({meta.get('privacy', 'private')}).",
+                 result={"video_url": url})
+
     def _run_subprocess(self, cmd):
         """Run a tool with list args (never a shell); poll for cancellation."""
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1038,6 +1142,16 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, payload)
             return
+        if self.path.startswith("/youtube/status"):
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish.youtube import YouTubeConnector
+            query = parse_qs(urlparse(self.path).query)
+            state = query.get("state", [None])[0]
+            payload = {"connected": YouTubeConnector().is_connected()}
+            if state and state in OAUTH_FLOWS:
+                payload["flow"] = OAUTH_FLOWS[state]
+            self._send_json(200, payload)
+            return
         if self.path == "/projects":
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from projects import ProjectStore
@@ -1087,7 +1201,28 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             kind = body.get("kind", "download")
-            if kind == "render":
+            if kind == "publish_youtube":
+                source_id = body.get("source_job_id", "")
+                if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
+                    self._send_json(400, {"error_code": "not_found",
+                                          "message": "A valid 'source_job_id' is required."})
+                    return
+                output_path = str(body.get("output_path") or "")
+                privacy = body.get("privacy", "private")
+                if privacy not in ("private", "unlisted", "public"):
+                    self._send_json(400, {"error_code": "invalid_request",
+                                          "message": "privacy must be private, unlisted or public."})
+                    return
+                job = Job(kind="publish_youtube", url=output_path,
+                          source_job_id=source_id)
+                job.publish_meta = {
+                    "title": str(body.get("title") or "")[:100],
+                    "description": str(body.get("description") or "")[:4900],
+                    "tags": [str(t)[:60] for t in (body.get("tags") or [])
+                             if isinstance(t, str)][:30],
+                    "privacy": privacy,
+                }
+            elif kind == "render":
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",
@@ -1227,6 +1362,39 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 JOBS[job.id] = job
             threading.Thread(target=job.run, daemon=True, name=f"job-{job.id}").start()
             self._send_json(202, {"job_id": job.id})
+            return
+
+        if self.path == "/youtube/connect":
+            body = self._read_json_body() or {}
+            client_id = str(body.get("client_id") or "").strip()
+            client_secret = str(body.get("client_secret") or "").strip()
+            if not client_id or not client_secret:
+                self._send_json(400, {"error_code": "invalid_request",
+                                      "message": "client_id and client_secret are required."})
+                return
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish.youtube import build_auth_url, make_pkce
+            import secrets as _secrets
+            verifier, challenge = make_pkce()
+            state = _secrets.token_urlsafe(24)
+            OAUTH_FLOWS[state] = {"status": "pending",
+                                  "message": "Waiting for authorization…"}
+            try:
+                start_oauth_listener(client_id, client_secret, verifier, state)
+            except OSError as exc:
+                self._send_json(500, {"error_code": "oauth_failed",
+                                      "message": f"Could not open the local redirect port: {exc}"})
+                return
+            self._send_json(200, {"auth_url": build_auth_url(client_id,
+                                                             challenge, state),
+                                  "state": state})
+            return
+
+        if self.path == "/youtube/disconnect":
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish.youtube import YouTubeConnector
+            YouTubeConnector().disconnect()
+            self._send_json(200, {"connected": False})
             return
 
         if self.path == "/cleanup":

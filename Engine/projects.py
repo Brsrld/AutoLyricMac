@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS outputs (
     duration    REAL,
     created_at  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS publishes (
+    id          INTEGER PRIMARY KEY,
+    job_id      TEXT NOT NULL,
+    platform    TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    privacy     TEXT,
+    created_at  REAL NOT NULL
+);
 """
 
 
@@ -95,6 +103,14 @@ class ProjectStore:
             conn.execute("UPDATE projects SET updated_at=? WHERE job_id=?",
                          (time.time(), job_id))
 
+    def record_publish(self, job_id, platform, url, privacy=None):
+        with self._connect() as conn:
+            self._ensure_row(conn, job_id)
+            conn.execute(
+                "INSERT INTO publishes (job_id, platform, url, privacy,"
+                " created_at) VALUES (?,?,?,?,?)",
+                (job_id, platform, url, privacy, time.time()))
+
     def list_projects(self):
         with self._connect() as conn:
             projects = [dict(r) for r in conn.execute(
@@ -102,6 +118,10 @@ class ProjectStore:
             for p in projects:
                 p["outputs"] = [dict(r) for r in conn.execute(
                     "SELECT file_path, style, duration, created_at FROM outputs"
+                    " WHERE job_id=? ORDER BY created_at DESC",
+                    (p["job_id"],))]
+                p["publishes"] = [dict(r) for r in conn.execute(
+                    "SELECT platform, url, privacy, created_at FROM publishes"
                     " WHERE job_id=? ORDER BY created_at DESC",
                     (p["job_id"],))]
         return projects
