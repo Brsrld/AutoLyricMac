@@ -1062,6 +1062,18 @@ struct ContentView: View {
         }
     }
 
+    /// Newest rendered video for the active project: this session's render
+    /// if present, else the latest output recorded in history.
+    private var latestOutputPath: String? {
+        if planJob?.kind == "render", planJob?.state == "done",
+           let path = planJob?.result?.outputPath {
+            return path
+        }
+        guard let source = activeJob else { return nil }
+        return projects.first(where: { $0.jobId == source.jobId })?
+            .outputs.first?.filePath
+    }
+
     private var planHasMedia: Bool {
         plan?.scenes.contains(where: { $0.media != nil }) == true
     }
@@ -1125,8 +1137,7 @@ struct ContentView: View {
                     .foregroundStyle(.red)
             }
 
-            if planJob?.kind == "render", planJob?.state == "done",
-               let path = planJob?.result?.outputPath {
+            if let path = latestOutputPath {
                 HStack(spacing: 12) {
                     Button {
                         NSWorkspace.shared.open(URL(fileURLWithPath: path))
