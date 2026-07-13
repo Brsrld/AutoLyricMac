@@ -1,78 +1,100 @@
-# AutoLyricMac
+# AutoLyricMac 🎬🎵
 
-Native macOS app that turns a YouTube music URL into a vertical 1080x1920 lyric video, with local preview and (later) publishing to YouTube Shorts and Instagram Reels.
+Turn any authorized YouTube song into a polished, vertical **lyric video**
+(1080×1920 @ 30 fps) for Instagram Reels and YouTube Shorts — fully on-device
+on Apple Silicon, with one click.
 
-This application only processes music or media the user owns, licenses, or is authorized to reuse. The UI requires an explicit authorization acknowledgement before any media is downloaded.
+> Paste a URL → the app downloads the audio, finds the best segment, extracts
+> and word-aligns the lyrics, plans scenes from their *meaning*, gathers
+> licensed or AI-drawn visuals, renders a styled video, and publishes it.
 
-## Status
+## ✨ Features
 
-**Phases 0–9 implemented** (see `Docs/PROJECT_STATE.md`): authorized audio
-ingestion, segment selection, lyrics with mlx-whisper word alignment and
-persistent corrections/Turkish translations, deterministic scene planning,
-licensed stock media (Pexels/Pixabay/Unsplash) with attribution, both final
-renderers (Archive Collage, Doodle Memory), history/regeneration/cleanup,
-and official-API publishing to YouTube and Instagram. Pending user steps:
-visual approval of the two style renders and live publishing credential
-tests. See `Docs/TROUBLESHOOTING.md` when something misbehaves.
+- **One-click pipeline** — download → segment → lyrics → alignment → scene
+  plan → media → render, as a single `Create Video` button (each stage also
+  runs standalone)
+- **Two hand-crafted styles**, tuned against real reference videos:
+  - **Archive Collage** — centered editorial artwork on paper, 1–3 framed
+    photos per scene, rhythm-locked image rotation on bass/drum onsets,
+    clean cuts between lines
+  - **Doodle Memory** — every scene is an original AI-drawn illustration
+    (FLUX) in a wobbly ink style, colored by the lyric's emotion, animated
+    with a hand-drawn "line boil", plus per-word handwritten sticker lyrics
+- **Serious lyric sync** — Demucs vocal separation + `whisper-large-v3-turbo`
+  word timestamps + monotonic windowed matching (repetitive folk lyrics stay
+  in order) + synced-LRC fallback; uncertain lines are flagged, never hidden
+- **Lyrics from anywhere** — LRCLIB, local `.lrc/.txt`, paste-in manually, or
+  automatic transcription from the song itself when nothing else exists
+- **Meaning-driven scenes** — deterministic TR/EN lexicon planner, optional
+  Claude semantics (per-line emotion/subjects/queries) and a free-text
+  **theme** field that steers imagery
+- **Licensed or generated media** — Pexels/Pixabay/Unsplash with ranking,
+  perceptual dedup, per-scene pools (no image ever repeats across scenes),
+  full attribution history; fal.ai FLUX as fallback or as the Doodle painter
+- **Manual control everywhere** — per-line corrections, paste-in-order
+  Turkish translations, exclude any image, regenerate media, segment
+  override, style/duration changes
+- **Publishing** — YouTube (official OAuth + resumable upload) and Instagram
+  Reels (official Graph API + temporary R2 object that is deleted right
+  after publish); captions and hashtags from one field
+- **Local & frugal** — engine binds to 127.0.0.1 only; secrets live in the
+  macOS Keychain; every paid API result (Claude, FLUX) is cached so the same
+  input is never paid for twice
 
-The full flow: paste an authorized URL → confirm authorization → ingest →
-analyze segment → fetch + align lyrics (edit/translate as needed) → build
-scene plan → fetch licensed media → render → preview → publish.
+## 🏗 Architecture
 
-## Structure
-
-| Path | Purpose |
+| Path | What lives there |
 |---|---|
-| `MacApp/` | Native SwiftUI macOS app (Swift Package) |
-| `Engine/` | Local Python engine (HTTP API on 127.0.0.1:8765, loopback only) |
-| `References/` | Reference material and design samples |
-| `Output/` | Rendered videos (git-ignored) |
-| `Cache/` | Downloaded/intermediate media, `Cache/jobs/<job-id>/` (git-ignored) |
-| `Logs/` | Engine and app logs (git-ignored) |
-| `Docs/` | Project documentation |
+| `MacApp/` | SwiftUI app (SPM). Auto-starts/stops the engine; Keychain; history UI |
+| `Engine/engine.py` | Loopback HTTP engine: jobs, lyrics/plan endpoints, publishing |
+| `Engine/lyrics/` | Providers, LRC parsing, Demucs+Whisper alignment, store |
+| `Engine/plan/` | Semantics (lexicon + optional Claude) and the scene planner |
+| `Engine/media/` | Stock providers, ranking, dedup, crop, FLUX generation |
+| `Engine/render/` | Archive & Doodle renderers, doodle library, validators |
+| `Engine/publish/` | YouTube OAuth/upload, Instagram Graph + R2 temp storage |
+| `Docs/` | Spec, style guide, phase plan, project state, troubleshooting |
 
-## Setup (one-time)
+The app never needs a terminal: it launches the Python engine itself and
+everything renders locally through FFmpeg (H.264/AAC, fast-start, validated
+against the output contract with QA frames).
 
-```sh
-scripts/setup.sh   # Homebrew deps + venv + tests + release build
-```
-
-or manually:
-
-```sh
-brew install ffmpeg yt-dlp python@3.12
-python3.12 -m venv Engine/.venv
-Engine/.venv/bin/pip install -r Engine/requirements.txt
-```
-
-## Running
+## 🚀 Setup
 
 ```sh
-cd MacApp
-swift run
+scripts/setup.sh        # Homebrew deps + venv + tests + release build
+cd MacApp && swift run  # start the app
 ```
 
-The app launches the engine itself (no separate Terminal needed), waits for the health endpoint, retries once on startup failure, and stops the engine on quit. The engine also exits on its own if the app process dies.
+Requirements: Apple Silicon Mac, Homebrew (`ffmpeg`, `yt-dlp`,
+`python@3.12`), Xcode command line tools. First alignment downloads Whisper
+weights (~1.6 GB) locally; Demucs weights arrive on first vocal separation.
 
-## Engine API (127.0.0.1:8765)
+### Optional keys (all stored in your Keychain, never in the repo)
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | Liveness check |
-| `POST /inspect` | `{url}` → metadata (id, title, uploader, duration, thumbnail) without downloading |
-| `POST /jobs` | `{url, authorized: true}` → start audio-ingestion job |
-| `GET /jobs/<id>` | Job state, progress, message, result path/duration |
-| `POST /jobs/<id>/cancel` | Cancel a running job |
+| Key | Unlocks | Cost |
+|---|---|---|
+| Pexels / Pixabay / Unsplash | licensed stock photos | free |
+| Anthropic API | per-line scene semantics + smarter queries | ~¢1 per song, cached |
+| fal.ai | AI-drawn Doodle scenes / stock fallback | ~$0.003 per image, cached |
+| Google OAuth client | YouTube upload | free quota |
+| Meta app token + Cloudflare R2 | Instagram Reels | free tier |
 
-## Tests
+## ⚖️ Licensing & ethics
+
+- A URL grants no reuse rights: every download requires an explicit
+  authorization acknowledgement in the UI, and the pipeline only processes
+  media you own or are licensed to use
+- Stock media comes only from official provider APIs, with creator/license
+  attribution recorded per asset; AI-generated scenes are labeled as such
+- No passwords, no browser automation, no scraping, no DRM circumvention;
+  publishing uses official OAuth/Graph APIs exclusively
+
+## 🧪 Tests
 
 ```sh
-Engine/.venv/bin/python -m unittest discover -s Engine/tests   # engine logic
-cd MacApp && swift test                                        # app logic
+Engine/.venv/bin/python -m unittest discover -s Engine/tests   # 170+ tests
+cd MacApp && swift test
 ```
 
-## Requirements
-
-- macOS with Apple Silicon
-- Xcode 26+ (Swift 6)
-- Homebrew: `ffmpeg`, `yt-dlp`, `python@3.12`
+See `Docs/TROUBLESHOOTING.md` when something misbehaves, and
+`Docs/PROJECT_STATE.md` for the full build history.
