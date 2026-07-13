@@ -87,6 +87,12 @@ def _beats_in(analysis, start, end):
             if start <= b < end]
 
 
+def _onsets_in(analysis, start, end):
+    """Percussive hit times (bass/drum onsets), scene-relative."""
+    return [round(o - start, 3) for o in analysis.get("onsets", [])
+            if start <= o < end]
+
+
 def recommend_style(emotion_totals, tempo_bpm):
     """Automatic preset choice per the style guide, with reasoning."""
     archive = (emotion_totals.get("melancholy", 0)
@@ -233,6 +239,7 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
                 "type": motion,
                 "amount": round(0.03 + 0.05 * energy, 3),
                 "pulse_beats": _beats_in(analysis, start, end),
+                "onsets": _onsets_in(analysis, start, end),
             },
             "transition": {"type": trans_name, "duration": trans_dur},
             "overlays": overlays,
@@ -244,6 +251,7 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
         "recommended_style": rec_style,
         "recommendation_confidence": rec_conf,
         "recommendation_reason": rec_reason,
+        "tempo_bpm": round(float(analysis.get("tempo_bpm", 100.0)), 2),
         "segment_start": segment_start,
         "segment_end": segment_end,
         "scene_count": len(scenes),

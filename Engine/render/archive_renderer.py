@@ -337,6 +337,10 @@ def render_archive(plan, audio_path, out_path, progress=None):
 
     # rhythm-driven image swaps: energetic lines cycle neighbouring photos
     # behind the lyric on the beat (reference-video behaviour)
+    # swap cadence follows the song: one hit per beat period, driven by
+    # percussive onsets (bass/drums) when available
+    tempo = float(plan.get("tempo_bpm") or 100.0)
+    beat_period = max(0.45, min(1.4, 60.0 / max(40.0, tempo)))
     variant_layers = []
     swap_beats = []
     for i, scene in enumerate(scenes):
@@ -348,9 +352,11 @@ def render_archive(plan, audio_path, out_path, progress=None):
                 variants.append(build_scene_layer(
                     {"media": {"file_path": p}}, layouts[i], i,
                     [q for q in own_pool if q != p]))
-            last = -1.0
-            for b in scene.get("motion", {}).get("pulse_beats", []):
-                if b - last >= 0.75:      # calm swaps: at most ~1.3/s
+            hits = (scene.get("motion", {}).get("onsets")
+                    or scene.get("motion", {}).get("pulse_beats", []))
+            last = -10.0
+            for b in hits:
+                if b - last >= beat_period:   # tempo-locked swap cadence
                     beats.append(b)
                     last = b
         variant_layers.append(variants)
@@ -413,9 +419,9 @@ def render_archive(plan, audio_path, out_path, progress=None):
             if idx > 0 and tdur > 0 and t_local < tdur:
                 # refs breathe through white: most cuts become white fades
                 if trans.get("type") in ("crossfade", "block_wipe"):
-                    trans = {"type": "fade_white",
-                             "duration": max(tdur, 0.6)}
-                    tdur = trans["duration"]
+                    # transition length breathes with the tempo (~2 beats)
+                    tdur = max(0.6, min(1.2, 2.0 * beat_period))
+                    trans = {"type": "fade_white", "duration": tdur}
                 prev = scenes[idx - 1]
                 prev_len = max(0.001, prev["end"] - prev["start"])
                 prev_arr = _scene_frame(
@@ -427,8 +433,8 @@ def render_archive(plan, audio_path, out_path, progress=None):
             # subtitle strip (enter 0.35s after transition, exit 0.25s)
             if subtitles[idx] is not None:
                 block, rect = subtitles[idx]
-                enter = min(1.0, max(0.0, (t_local - tdur) / 0.35))
-                exit_ = min(1.0, (scene["end"] - t) / 0.25)
+                enter = min(1.0, max(0.0, (t_local - tdur) / 0.6))
+                exit_ = min(1.0, (scene["end"] - t) / 0.5)
                 alpha = ease_in_out(max(0.0, min(enter, exit_)))
                 if alpha > 0.01:
                     rise = (1.0 - ease_in_out(enter)) * 20
