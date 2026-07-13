@@ -657,7 +657,11 @@ class Job:
         self.set(state="analyzing", progress=0.1,
                  message="Transcribing vocals (local Whisper)…")
         try:
+            from lyrics.translate import looks_turkish as _ltr
+            lang_hint = "tr" if _ltr([ln["display_text"]
+                                      for ln in payload["lines"]]) else None
             asr_words, source_lang = transcribe_words(source_audio,
+                                                      language=lang_hint,
                                                       ffmpeg=FFMPEG)
         except Exception as exc:
             self.fail("align_failed", f"Transcription failed: {exc}")
