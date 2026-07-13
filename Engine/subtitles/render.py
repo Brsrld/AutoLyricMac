@@ -37,7 +37,7 @@ CREAM_TR = (228, 216, 188)      # translation strip: slightly darker paper
 STICKER_WHITE = (250, 248, 244)
 UNCERTAIN_AMBER = (196, 138, 42)
 
-EN_SIZE, TR_SIZE, HAND_SIZE = 52, 40, 68
+EN_SIZE, TR_SIZE, HAND_SIZE = 52, 40, 52
 LINE_GAP = 10
 
 
@@ -104,7 +104,7 @@ def build_archive_subtitle(text, translation=None, seed=0, uncertain=False,
 # ---------------------------------------------------------------------------
 
 def build_doodle_words(words, seed=0, uncertain=False,
-                       max_width=int(SAFE_ZONE.w * 0.9)):
+                       max_width=int(SAFE_ZONE.w * 0.62)):
     """Individual word stickers in a flow layout.
 
     Returns (stickers, size) where stickers is a list of
@@ -119,13 +119,13 @@ def build_doodle_words(words, seed=0, uncertain=False,
             continue
         sticker = paper_sticker(
             text, FONT_HAND, HAND_SIZE, text_fill=NAVY, bg=STICKER_WHITE,
-            pad=(16, 8), rotation=(-3.5, 2.5, -1.5, 3.0, 1.0)[(seed + wi) % 5],
-            seed=seed * 53 + wi, jitter=4)
+            pad=(9, 5), rotation=(-2.0, 1.5, -1.0, 2.0, 0.5)[(seed + wi) % 5],
+            seed=seed * 53 + wi, jitter=6)
         if x > 0 and x + sticker.width > max_width:
-            x, y = 0, y + row_h - 10
+            x, y = 0, y + row_h - 14
             row_h = 0
         items.append([sticker, (x, y), wi])
-        x += sticker.width - 12  # slight overlap keeps the phrase cohesive
+        x += sticker.width - 6   # word-blob cloud, refs-style tight rows
         row_h = max(row_h, sticker.height)
     if not items:
         return [], (0, 0)

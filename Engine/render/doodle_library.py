@@ -416,13 +416,22 @@ def pick_doodle(subjects, index):
     return best[index % len(best)]
 
 
-def build_doodle(name, height=640):
-    """Instantiate a library doodle at roughly `height` px (RGBA)."""
+def build_doodle(name, height=640, seed_offset=0):
+    """Instantiate a library doodle at roughly `height` px (RGBA).
+
+    Different `seed_offset`s re-jitter every stroke — cycling a few
+    variants at ~6 fps recreates the hand-drawn 'wiggle' of the reference
+    videos."""
     builder, _tags, _ground = LIBRARY[name]
+    import inspect
+    kwargs = {}
+    sig = inspect.signature(builder)
+    if "seed" in sig.parameters and seed_offset:
+        kwargs["seed"] = sig.parameters["seed"].default + seed_offset
     try:
-        return builder(height=height)
+        return builder(height=height, **kwargs)
     except TypeError:
-        return builder(size=height)
+        return builder(size=height, **kwargs)
 
 
 def is_ground_anchored(name):

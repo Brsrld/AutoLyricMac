@@ -45,13 +45,13 @@ def doodle_layout(scene_index, name, ground_anchored):
     rng = random.Random(scene_index * 613 + hash(name) % 1000)
     side = -1 if scene_index % 2 == 0 else 1
     if ground_anchored:
-        height_frac = 0.30 + 0.08 * rng.random()
-        bottom_frac = 0.845 + 0.05 * rng.random()
-        x_center = 0.5 + side * (0.16 + 0.10 * rng.random())
+        height_frac = 0.42 + 0.14 * rng.random()   # refs: figures dominate
+        bottom_frac = 0.86 + 0.06 * rng.random()
+        x_center = 0.5 + side * (0.12 + 0.12 * rng.random())
         return {"height_frac": height_frac, "bottom_frac": bottom_frac,
                 "x_center": min(0.80, max(0.20, x_center)), "side": side}
-    height_frac = 0.16 + 0.08 * rng.random()
-    bottom_frac = 0.22 + 0.16 * rng.random()
+    height_frac = 0.20 + 0.10 * rng.random()
+    bottom_frac = 0.24 + 0.16 * rng.random()
     x_center = 0.5 + side * (0.20 + 0.08 * rng.random())
     return {"height_frac": height_frac, "bottom_frac": bottom_frac,
             "x_center": min(0.82, max(0.18, x_center)), "side": side}
@@ -110,14 +110,15 @@ def build_scene_background(scene, lut):
 
     # lively, colorful grade: boosted saturation and brightness with only a
     # whisper of warmth — Doodle Memory is the cheerful, playful style
+    # reference (wigglypaint) look: flat posterized color, warm and moody
     from PIL import ImageEnhance
-    frame = ImageEnhance.Color(frame).enhance(1.35)
-    frame = ImageEnhance.Brightness(frame).enhance(1.06)
-    frame = ImageEnhance.Contrast(frame).enhance(1.08)
+    frame = ImageEnhance.Color(frame).enhance(1.08)
+    frame = ImageEnhance.Contrast(frame).enhance(1.05)
+    arr = posterize_levels(np.asarray(frame), levels=11)
     gray = np.asarray(frame.convert("L"))
     warm = apply_lut(posterize_levels(gray, levels=24), lut).astype(np.float32)
-    color = np.asarray(frame, dtype=np.float32)
-    blended = np.clip(color * 0.85 + warm * 0.15, 0, 255).astype(np.uint8)
+    blended = np.clip(arr.astype(np.float32) * 0.88 + warm * 0.12,
+                      0, 255).astype(np.uint8)
     return Image.fromarray(blended)
 
 
@@ -162,12 +163,17 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
         name = pick_doodle(scene.get("subjects"), i)
         if name is not None:   # doodles appear only when lyric-relevant
             layout = doodle_layout(i, name, is_ground_anchored(name))
-            sprite = build_doodle(name, height=int(layout["height_frac"] * H))
+            hpx = int(layout["height_frac"] * H)
+            sprite = build_doodle(name, height=hpx)
+            sprites = [sprite,
+                       build_doodle(name, height=hpx, seed_offset=101),
+                       build_doodle(name, height=hpx, seed_offset=202)]
             d_rect = doodle_screen_rect(layout,
                                         sprite.width / sprite.height)
             avoid = [d_rect]
         else:
             layout = sprite = None
+            sprites = []
             avoid = []
 
         stickers = None
@@ -193,6 +199,7 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
                     translation = (tr_block,
                                    (int(tr_x), int(s_rect.y + size[1] + 10)))
         prepared.append({"name": name, "sprite": sprite, "layout": layout,
+                         "sprites": sprites,
                          "stickers": stickers, "translation": translation})
 
     grain = make_grain_frames(strength=4.0)
@@ -223,6 +230,8 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
 
         # doodle: slide-in entrance, breathe, beat micro-bounce
         sprite, layout = prep["sprite"], prep["layout"]
+        if sprite is not None and prep["sprites"]:
+            sprite = prep["sprites"][int(t * 6) % len(prep["sprites"])]
         if sprite is not None:
             enter = ease_in_out(min(1.0, t_local / 0.3))
             breathe = 1.0 + 0.028 * math.sin(2 * math.pi * t_local / 1.8)
