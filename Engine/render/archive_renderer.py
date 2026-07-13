@@ -350,7 +350,7 @@ def render_archive(plan, audio_path, out_path, progress=None):
                     [q for q in own_pool if q != p]))
             last = -1.0
             for b in scene.get("motion", {}).get("pulse_beats", []):
-                if b - last >= 0.35:      # never strobe faster than ~3/s
+                if b - last >= 0.75:      # calm swaps: at most ~1.3/s
                     beats.append(b)
                     last = b
         variant_layers.append(variants)

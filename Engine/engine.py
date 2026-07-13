@@ -729,79 +729,12 @@ class Job:
         store.apply_alignment(self.source_job_id, aligned, matched_ratio,
                               mean_confidence)
 
-        # Turkish translation is always added under the original (local
-        # Argos models; user-entered translations are never overwritten)
-        self.set(progress=0.85,
-                 message="Adding Turkish translations (local)…")
         translated = 0
-        log = lambda m: print(f"[engine] job {self.id} translate: {m}",
-                              flush=True)
-        try:
-            from lyrics.translate import (claude_translate_lines,
-                                          ensure_argos_pair,
-                                          fill_missing_translations,
-                                          looks_turkish)
-            # never translate Turkish songs, even if Whisper mislabels them
-            if looks_turkish(line_texts):
-                source_lang = "tr"
-                log("lyrics look Turkish; no translation needed")
-            from publish.youtube import Keychain
-            api_key = Keychain().get("anthropic_api_key")
-            if api_key and source_lang != "tr":
-                # high-quality LLM translation (never overwrites user edits)
-                refreshed = store.get_lyrics(self.source_job_id)
-                todo = [ln for ln in refreshed["lines"]
-                        if not ln.get("translation")
-                        and ln["display_text"].strip()]
-                if todo:
-                    import llm_cache
-                    # serve repeats from the local cache; pay only for new text
-                    uncached = []
-                    for ln in todo:
-                        hit = llm_cache.get_json(
-                            llm_cache.key_for("tr", ln["display_text"]))
-                        if hit:
-                            store.update_line(self.source_job_id,
-                                              ln["line_index"],
-                                              translation=hit)
-                            translated += 1
-                        else:
-                            uncached.append(ln)
-                    if uncached:
-                        log(f"translating {len(uncached)} new line(s) via Claude…")
-                        results = claude_translate_lines(
-                            [ln["display_text"] for ln in uncached], api_key,
-                            source_lang)
-                        for ln, tr_text in zip(uncached, results):
-                            if tr_text:
-                                llm_cache.put_json(
-                                    llm_cache.key_for("tr", ln["display_text"]),
-                                    tr_text)
-                                store.update_line(self.source_job_id,
-                                                  ln["line_index"],
-                                                  translation=tr_text)
-                                translated += 1
-            elif ensure_argos_pair(source_lang, "tr", log=log):
-                translated, _ = fill_missing_translations(
-                    store, self.source_job_id, source_lang, log=log)
-        except Exception as exc:
-            log(f"Claude translation failed ({exc}); trying local Argos…")
-            try:
-                from lyrics.translate import (ensure_argos_pair,
-                                              fill_missing_translations)
-                if ensure_argos_pair(source_lang, "tr", log=log):
-                    translated, _ = fill_missing_translations(
-                        store, self.source_job_id, source_lang, log=log)
-            except Exception as exc2:
-                log(f"skipped ({exc2})")
-
         refreshed = store.get_lyrics(self.source_job_id)
         uncertain = sum(1 for ln in refreshed["lines"] if ln["uncertain"])
         suspect = refreshed["suspect"]
         message = (f"Alignment done: {matched_ratio:.0%} of words matched, "
                    f"{uncertain} uncertain line(s).")
-        if translated:
-            message += f" {translated} line(s) translated to Turkish."
         if suspect:
             message += " Lyrics may not match this recording — please review."
         self.set(state="done", progress=1.0, message=message,
@@ -812,7 +745,6 @@ class Job:
                      "suspect": suspect,
                      "asr_word_count": len(asr_words),
                      "language": source_lang,
-                     "translated_lines": translated,
                  })
 
     def _run_subtitle_preview(self):
