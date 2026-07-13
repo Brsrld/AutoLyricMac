@@ -91,11 +91,27 @@ def scene_layout(scene, index):
     drift = ((0.0, 0.0),
              (drift_mag * np.cos(angle), drift_mag * 0.6 * np.sin(angle)))
 
+    # rhythm-aware density: calm lines hold one long image (uzun hava),
+    # lively lines stack extra smaller frames around the main one
+    band = scene.get("energy_band", "normal")
+    extras = []
+    if band != "calm":
+        count = 1 if band == "normal" else 2
+        spots = [((0.62, 0.10), 0.30), ((0.06, 0.58), 0.36),
+                 ((0.64, 0.55), 0.28)]
+        for k in range(count):
+            (ex, ey), ew = spots[(index + k) % len(spots)]
+            extras.append({"pos": (ex + rng.uniform(-0.02, 0.02),
+                                   ey + rng.uniform(-0.02, 0.02)),
+                           "w": ew + rng.uniform(-0.03, 0.04),
+                           "rotation": rng.uniform(-1.2, 1.2)})
+
     return {
-        "photo_w": photo_w,
+        "photo_w": photo_w if band == "calm" else min(photo_w, 0.72),
         "photo_pos": photo_pos,
         "rotation": rotation,
         "blocks": blocks,
+        "extras": extras,
         "zoom": zoom,
         "drift": drift,
         "max_photo_h": 0.60,                           # of artboard height
@@ -148,7 +164,7 @@ def _load_scene_photo(scene):
     return Image.open(path).convert("RGB")
 
 
-def build_scene_layer(scene, layout, seed):
+def build_scene_layer(scene, layout, seed, pool=()):
     """Oversized artboard: paper + blocks + framed monochrome photo."""
     bw, bh = int(W * OVERSIZE), int(H * OVERSIZE)
     board = Image.fromarray(paper_canvas(seed=7 + seed)).resize(
@@ -187,6 +203,31 @@ def build_scene_layer(scene, layout, seed):
         shadow, pad, off = drop_shadow(rotated.size)
         board.paste(shadow, (px - pad + off[0], py - pad + off[1]), shadow)
         board.paste(rotated, (px, py), rotated)
+
+    # extra smaller frames borrowed from neighbouring scenes' photos
+    from proto_common import cover_resize as _cr
+    for k, extra in enumerate(layout.get("extras", [])):
+        if k >= len(pool):
+            break
+        try:
+            img = Image.open(pool[k]).convert("RGB")
+        except Exception:
+            continue
+        img = soft_archive_color(img)
+        ew = int(bw * extra["w"])
+        eh = min(int(ew * img.height / img.width), int(bh * 0.34))
+        img = _cr(img, ew, eh)
+        b2 = max(8, ew // 60)
+        framed2 = Image.new("RGB", (ew + b2 * 2, eh + b2 * 2),
+                            (246, 244, 239))
+        framed2.paste(img, (b2, b2))
+        rot2 = framed2.convert("RGBA").rotate(extra["rotation"], expand=True,
+                                              resample=Image.BICUBIC,
+                                              fillcolor=(0, 0, 0, 0))
+        ex, ey = int(bw * extra["pos"][0]), int(bh * extra["pos"][1])
+        sh2, pad2, off2 = drop_shadow(rot2.size)
+        board.paste(sh2, (ex - pad2 + off2[0], ey - pad2 + off2[1]), sh2)
+        board.paste(rot2, (ex, ey), rot2)
 
     for block, pos in front_blocks:
         board.paste(block, pos, block)
@@ -285,7 +326,15 @@ def render_archive(plan, audio_path, out_path, progress=None):
     duration = float(plan["segment_end"]) - seg_start
 
     layouts = [scene_layout(s, i) for i, s in enumerate(scenes)]
-    layers = [build_scene_layer(s, l, i)
+    def pool_for(i):
+        paths = []
+        for off in (1, 2, 3):
+            m = scenes[(i + off) % len(scenes)].get("media") or {}
+            if m.get("file_path"):
+                paths.append(m["file_path"])
+        return paths
+
+    layers = [build_scene_layer(s, l, i, pool_for(i))
               for i, (s, l) in enumerate(zip(scenes, layouts))]
 
     # rhythm-driven image swaps: energetic lines cycle neighbouring photos
@@ -300,7 +349,8 @@ def render_archive(plan, audio_path, out_path, progress=None):
                 j = (i + off) % len(scenes)
                 if j != i and scenes[j].get("media"):
                     variants.append(build_scene_layer(scenes[j],
-                                                      layouts[i], i))
+                                                      layouts[i], i,
+                                                      pool_for(j)))
             last = -1.0
             for b in scene.get("motion", {}).get("pulse_beats", []):
                 if b - last >= 0.35:      # never strobe faster than ~3/s
