@@ -65,10 +65,11 @@ Services/credentials policy: `Docs/SERVICES_AND_KEYS.md`.
 - E2E: plan job over HTTP on real data; media job happy path with a
   stubbed provider fetched 4/4 scenes with attribution + adaptation.
 
-**Pending (needs the user):** live provider smoke test. Get a free Pexels
-API key (pexels.com/api, free tier ~200 req/h; revocable in the Pexels
-dashboard; keys stay in Keychain), paste it in the app's "Stock Media API
-Keys" section, then run Fetch Licensed Media once and confirm results.
+- Live provider test (2026-07-13, user-supplied Pexels key, now in
+  Keychain as `AutoLyricMac`/`pexels_api_key`): photo + video search OK;
+  full HTTP media job fetched 4/4 scenes with high-res portrait photos,
+  correct attribution, and visually lyric-relevant results (embrace for
+  "Hold me close", walking-in-field for "Walking home…").
 
 ## Next: Phase 5 — Finalize Archive Collage
 
