@@ -242,6 +242,31 @@ final class PlanPayloadTests: XCTestCase {
     }
 }
 
+final class ProjectPayloadTests: XCTestCase {
+    func testProjectListParsing() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let json = """
+        {"projects": [
+          {"job_id": "deadbeef", "url": "https://youtu.be/x", "video_id": "v",
+           "title": "Song", "uploader": "Artist", "duration": 200.0,
+           "audio_path": "/tmp/a.m4a", "style": "doodleMemory",
+           "target_seconds": 45.0, "segment_start": 60.0,
+           "created_at": 1.0, "updated_at": 2.0,
+           "audio_exists": true, "has_plan": true,
+           "outputs": [{"file_path": "/tmp/v.mp4", "style": "doodleMemory",
+                        "duration": 45.0, "created_at": 3.0}]}
+        ]}
+        """
+        struct Response: Decodable { let projects: [ProjectPayload] }
+        let response = try decoder.decode(Response.self, from: Data(json.utf8))
+        let p = response.projects[0]
+        XCTAssertEqual(p.title, "Song")
+        XCTAssertEqual(p.audioExists, true)
+        XCTAssertEqual(p.outputs.first?.filePath, "/tmp/v.mp4")
+    }
+}
+
 final class KeychainStoreTests: XCTestCase {
     private let account = "test_key_roundtrip"
 

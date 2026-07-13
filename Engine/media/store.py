@@ -15,6 +15,12 @@ from .dedup import dhash, is_duplicate
 from .providers import USER_AGENT, MediaProviderError
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS excluded (
+    job_id       TEXT NOT NULL,
+    provider     TEXT NOT NULL,
+    provider_ref TEXT NOT NULL,
+    PRIMARY KEY (job_id, provider, provider_ref)
+);
 CREATE TABLE IF NOT EXISTS assets (
     id           INTEGER PRIMARY KEY,
     job_id       TEXT NOT NULL,
@@ -86,6 +92,29 @@ class MediaStore:
                 (job_id,)).fetchall()
         return {(r["provider"], r["provider_ref"]) for r in rows}
 
+    def exclude_asset(self, job_id, provider, provider_ref):
+        """Never offer this asset for this project again (Phase 7)."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO excluded (job_id, provider,"
+                " provider_ref) VALUES (?,?,?)",
+                (job_id, provider, provider_ref))
+            conn.execute(
+                "DELETE FROM assets WHERE job_id=? AND provider=?"
+                " AND provider_ref=?", (job_id, provider, provider_ref))
+
+    def excluded_refs(self, job_id):
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT provider, provider_ref FROM excluded WHERE job_id=?",
+                (job_id,)).fetchall()
+        return {(r["provider"], r["provider_ref"]) for r in rows}
+
+    def clear_assets(self, job_id):
+        """Forget chosen assets (regenerate-media keeps exclusions)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM assets WHERE job_id=?", (job_id,))
+
 
 def download_bytes(url, timeout=60, opener=None):
     """Fetch a media file with a size cap; returns bytes."""
@@ -133,18 +162,26 @@ def fetch_photo(cand, dest_dir, min_size=(1080, 1600), opener=None):
 
 
 def pick_and_fetch(ranked, job_id, scene_index, store, dest_dir,
-                   dedup_threshold=8, opener=None, log=None):
+                   dedup_threshold=8, opener=None, log=None,
+                   avoid_refs=frozenset()):
     """Walk ranked candidates; skip duplicates/repeat refs/bad downloads.
 
+    `avoid_refs` adds extra (provider, ref) pairs to skip this round (used
+    by regenerate so replaced assets cannot re-enter via another scene).
     Returns (candidate, path) of the first usable asset and records it with
     attribution, or raises MediaProviderError when everything failed.
     """
     hashes = store.existing_hashes(job_id)
-    used = store.used_refs(job_id)
+    used = store.used_refs(job_id) | set(avoid_refs)
+    excluded = store.excluded_refs(job_id)
     failures = []
     for ranked_item in ranked:
         cand = ranked_item.candidate
-        if (cand.provider, cand.provider_ref) in used:
+        key = (cand.provider, cand.provider_ref)
+        if key in excluded:
+            failures.append(f"{cand.provider}:{cand.provider_ref} excluded by user")
+            continue
+        if key in used:
             failures.append(f"{cand.provider}:{cand.provider_ref} already used")
             continue
         if cand.kind != "photo":

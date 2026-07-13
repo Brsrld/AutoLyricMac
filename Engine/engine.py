@@ -46,6 +46,7 @@ CACHE_JOBS_DIR = REPO_ROOT / "Cache" / "jobs"
 LYRICS_DB_PATH = REPO_ROOT / "Cache" / "lyrics.db"
 MEDIA_DB_PATH = REPO_ROOT / "Cache" / "media.db"
 MEDIA_CACHE_DIR = REPO_ROOT / "Cache" / "media"
+PROJECTS_DB_PATH = REPO_ROOT / "Cache" / "projects.db"
 SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
 VIDEO_OUTPUT_DIR = REPO_ROOT / "Output" / "videos"
 SUBTITLE_STYLES = ("archiveCollage", "doodleMemory")
@@ -203,6 +204,8 @@ class Job:
         # provider API keys are held in memory for this job only —
         # never logged, never persisted, never included in snapshots
         self.api_keys = api_keys or {}
+        self.regenerate = False          # media job: refetch every scene
+        self.exclude_assets = []         # media job: [(provider, ref), ...]
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
         self.message = "Queued"
@@ -332,9 +335,10 @@ class Job:
             "retries": 2,
             "socket_timeout": 20,
         }
+        source_info = {}
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.extract_info(self.url, download=True)
+                source_info = ydl.extract_info(self.url, download=True) or {}
         except CancelledError:
             raise
         except yt_dlp.utils.DownloadError as exc:
@@ -390,6 +394,14 @@ class Job:
             source.unlink(missing_ok=True)
         except OSError:
             pass
+
+        # project history: relaunches restore this ingest (Phase 7)
+        from projects import ProjectStore
+        ProjectStore(PROJECTS_DB_PATH).record_ingest(
+            self.id, url=self.url, video_id=self.video_id,
+            title=source_info.get("title"),
+            uploader=source_info.get("uploader") or source_info.get("channel"),
+            duration=duration, audio_path=str(audio_out))
 
         self.set(state="done", progress=1.0,
                  message=f"Audio ready ({codec}, {duration:.1f}s).",
@@ -726,6 +738,10 @@ class Job:
         plan["source_job_id"] = self.source_job_id
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
+        from projects import ProjectStore
+        ProjectStore(PROJECTS_DB_PATH).update_settings(
+            self.source_job_id, style=plan["style"],
+            target_seconds=seg_end - seg_start, segment_start=seg_start)
         print(f"[engine] job {self.id} plan: {plan['scene_count']} scenes, "
               f"style {plan['style']} (recommended {plan['recommended_style']}: "
               f"{plan['recommendation_reason']})", flush=True)
@@ -765,10 +781,30 @@ class Job:
 
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
         store = MediaStore(MEDIA_DB_PATH)
+        for provider, ref in self.exclude_assets:
+            store.exclude_asset(self.source_job_id, provider, ref)
+            for scene in plan["scenes"]:
+                media = scene.get("media")
+                if media and media.get("provider") == provider \
+                        and str(media.get("provider_ref")) == str(ref):
+                    scene["media"] = None
+        avoid_refs = set()
+        if self.regenerate:
+            # remember the outgoing assets so no scene can re-pick any of
+            # them this round (rows get replaced as scenes refill)
+            for scene in plan["scenes"]:
+                media = scene.get("media")
+                if media:
+                    avoid_refs.add((media["provider"],
+                                    str(media["provider_ref"])))
+                scene["media"] = None
         dest_dir = MEDIA_CACHE_DIR / self.source_job_id
         scenes = plan["scenes"]
         fetched, provider_errors, scene_errors = 0, [], []
         for i, scene in enumerate(scenes):
+            if scene.get("media"):
+                fetched += 1     # already filled; only empty scenes fetch
+                continue
             self._check_cancel()
             self.set(state="downloading",
                      progress=0.05 + 0.9 * (i / max(1, len(scenes))),
@@ -786,6 +822,7 @@ class Job:
             try:
                 chosen, path = pick_and_fetch(
                     ranked, self.source_job_id, i, store, dest_dir,
+                    avoid_refs=avoid_refs,
                     log=lambda m: print(f"[engine] job {self.id} media: {m}",
                                         flush=True))
             except MediaProviderError as exc:
@@ -890,6 +927,10 @@ class Job:
         if out_duration is None or abs(out_duration - duration) > 0.5:
             self.fail("ffmpeg_failed", "Rendered video failed verification.")
             return
+        from projects import ProjectStore
+        ProjectStore(PROJECTS_DB_PATH).record_output(
+            self.source_job_id, out_path, style=self.style,
+            duration=out_duration)
         self.set(state="done", progress=1.0,
                  message=f"Video ready ({with_media}/{len(plan['scenes'])} "
                          f"scenes with media, {out_duration:.1f}s).",
@@ -997,6 +1038,22 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, payload)
             return
+        if self.path == "/projects":
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from projects import ProjectStore
+            projects = ProjectStore(PROJECTS_DB_PATH).list_projects()
+            for p in projects:
+                job_id = p["job_id"]
+                try:
+                    job_dir = job_dir_for(job_id)
+                except ValueError:
+                    continue
+                p["audio_exists"] = bool(p.get("audio_path")
+                                         and Path(p["audio_path"]).exists()) \
+                    or (job_dir / "audio.m4a").exists()
+                p["has_plan"] = (job_dir / "scene_plan.json").exists()
+            self._send_json(200, {"projects": projects})
+            return
         m = re.match(r"^/plan/([0-9a-f]{32})$", self.path)
         if m:
             try:
@@ -1077,6 +1134,14 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                                 and str(raw_keys[name]).strip()}
                     job = Job(kind="media", source_job_id=source_id,
                               api_keys=api_keys)
+                    job.regenerate = bool(body.get("regenerate"))
+                    raw_exclude = body.get("exclude") or []
+                    if isinstance(raw_exclude, list):
+                        job.exclude_assets = [
+                            (str(e.get("provider", "")),
+                             str(e.get("provider_ref", "")))
+                            for e in raw_exclude if isinstance(e, dict)
+                            and e.get("provider") and e.get("provider_ref")]
             elif kind in ("lyrics", "align", "subtitle_preview"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
@@ -1162,6 +1227,36 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 JOBS[job.id] = job
             threading.Thread(target=job.run, daemon=True, name=f"job-{job.id}").start()
             self._send_json(202, {"job_id": job.id})
+            return
+
+        if self.path == "/cleanup":
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from projects import ProjectStore, run_cleanup
+            with JOBS_LOCK:
+                active = {j.source_job_id or j.id for j in JOBS.values()}
+            count, freed = run_cleanup(REPO_ROOT,
+                                       ProjectStore(PROJECTS_DB_PATH), active)
+            self._send_json(200, {"removed": count, "freed_bytes": freed})
+            return
+
+        m = re.match(r"^/projects/([0-9a-f]{32})/delete$", self.path)
+        if m:
+            body = self._read_json_body() or {}
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from projects import ProjectStore
+            store = ProjectStore(PROJECTS_DB_PATH)
+            if not store.delete_project(m.group(1)):
+                self._send_json(404, {"error_code": "not_found",
+                                      "message": "Unknown project."})
+                return
+            if body.get("delete_files"):
+                try:
+                    shutil.rmtree(job_dir_for(m.group(1)), ignore_errors=True)
+                    shutil.rmtree(MEDIA_CACHE_DIR / m.group(1),
+                                  ignore_errors=True)
+                except ValueError:
+                    pass
+            self._send_json(200, {"deleted": True})
             return
 
         m = re.match(r"^/lyrics/([0-9a-f]{32})/line$", self.path)

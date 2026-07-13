@@ -58,6 +58,11 @@ struct ContentView: View {
     @State private var unsplashKey: String = ""
     @State private var keysLoaded = false
 
+    // History (Phase 7)
+    @State private var projects: [ProjectPayload] = []
+    @State private var historyLoaded = false
+    @State private var cleanupMessage: String?
+
     private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
@@ -86,6 +91,7 @@ struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                historySection
                 urlSection
                 metadataSection
                 durationSection
@@ -123,6 +129,18 @@ struct ContentView: View {
         .frame(minWidth: 520, minHeight: 720)
         .onAppear { engine.startPolling() }
         .onChange(of: youtubeURL) { _, _ in scheduleInspection() }
+        .onChange(of: engine.status) { _, status in
+            if status == .connected && !historyLoaded {
+                historyLoaded = true
+                refreshHistory()
+            }
+        }
+        .onChange(of: activeJob?.state) { _, state in
+            if state == "done" { refreshHistory() }
+        }
+        .onChange(of: planJob?.state) { _, state in
+            if state == "done" { refreshHistory() }
+        }
     }
 
     // MARK: - Sections
@@ -370,6 +388,153 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - History (Phase 7)
+
+    @ViewBuilder
+    private var historySection: some View {
+        if !projects.isEmpty {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(projects) { project in
+                        projectRow(project)
+                    }
+                    HStack(spacing: 12) {
+                        Button("Clean Up Caches") { runCleanup() }
+                            .controlSize(.small)
+                        if let message = cleanupMessage {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("History (\(projects.count))")
+                    .font(.headline)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func projectRow(_ project: ProjectPayload) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(project.title ?? project.videoId ?? String(project.jobId.prefix(8)))
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    if let uploader = project.uploader {
+                        Text(uploader)
+                    }
+                    if let style = project.style {
+                        Text(style)
+                    }
+                    Text("\(project.outputs.count) video(s)")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if project.audioExists == true {
+                Button("Resume") { resumeProject(project) }
+                    .controlSize(.small)
+            }
+            if let output = project.outputs.first {
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: output.filePath))
+                } label: {
+                    Image(systemName: "play.rectangle")
+                }
+                .buttonStyle(.plain)
+                .help("Open the latest rendered video")
+            }
+            Button {
+                revealProject(project)
+            } label: {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.plain)
+            .help("Reveal project files in Finder")
+            Button(role: .destructive) {
+                deleteProject(project)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.plain)
+            .help("Remove from history and delete cached files (rendered videos are kept)")
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func refreshHistory() {
+        Task {
+            projects = (try? await engine.listProjects()) ?? projects
+        }
+    }
+
+    private func resumeProject(_ project: ProjectPayload) {
+        stopPreview()
+        jobError = nil
+        analysisJob = nil
+        analysisError = nil
+        lyricsJob = nil
+        lyricsError = nil
+        planJob = nil
+        planError = nil
+        editingLine = nil
+        activeJob = JobStatus(
+            jobId: project.jobId, kind: "download", state: "done",
+            progress: 1.0, message: "Restored from history.",
+            errorCode: nil, audioPath: project.audioPath,
+            audioDuration: project.duration, audioFormat: "aac", result: nil)
+        if let target = project.targetSeconds,
+           [30, 45, 60].contains(Int(target)) {
+            durationSeconds = Int(target)
+        }
+        let guess = SongTitleParser.guess(title: project.title,
+                                          uploader: project.uploader)
+        lyricArtist = guess.artist
+        lyricTitle = guess.title
+        Task {
+            lyrics = try? await engine.fetchLyrics(sourceJobId: project.jobId)
+            plan = try? await engine.fetchPlan(sourceJobId: project.jobId)
+            AppLog.shared.append("Project \(project.jobId.prefix(8)) restored from history.")
+        }
+    }
+
+    private func revealProject(_ project: ProjectPayload) {
+        if let path = project.audioPath {
+            NSWorkspace.shared.activateFileViewerSelecting(
+                [URL(fileURLWithPath: path).deletingLastPathComponent()])
+        }
+    }
+
+    private func deleteProject(_ project: ProjectPayload) {
+        Task {
+            try? await engine.deleteProject(jobId: project.jobId,
+                                            deleteFiles: true)
+            if activeJob?.jobId == project.jobId {
+                activeJob = nil
+                lyrics = nil
+                plan = nil
+            }
+            AppLog.shared.append("Project \(project.jobId.prefix(8)) removed from history.")
+            refreshHistory()
+        }
+    }
+
+    private func runCleanup() {
+        Task {
+            if let result = try? await engine.runCleanup() {
+                let mb = Double(result.freedBytes) / 1_048_576
+                cleanupMessage = "Removed \(result.removed) item(s), freed \(String(format: "%.1f", mb)) MB."
+                AppLog.shared.append("Cache cleanup: \(cleanupMessage ?? "")")
+            }
+        }
+    }
+
     // MARK: - Lyrics & sync (Phase 3)
 
     private var lyricsJobRunning: Bool {
@@ -609,6 +774,10 @@ struct ContentView: View {
                 Button("Fetch Licensed Media") { startMediaFetch() }
                     .disabled(engine.status != .connected || planJobRunning
                               || plan == nil || !anyProviderKey)
+                Button("Regenerate Media") { startMediaFetch(regenerate: true) }
+                    .disabled(engine.status != .connected || planJobRunning
+                              || !planHasMedia || !anyProviderKey)
+                    .help("Fetch fresh media for every scene (previous picks are avoided)")
                 Button("Render Video") { startRender() }
                     .buttonStyle(.borderedProminent)
                     .disabled(engine.status != .connected || planJobRunning
@@ -754,6 +923,18 @@ struct ContentView: View {
                           systemImage: "photo")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if let ref = media.providerRef {
+                        Button {
+                            excludeAsset(provider: media.provider, ref: ref)
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .help("Exclude this image and fetch a replacement")
+                        .disabled(planJobRunning || !anyProviderKey)
+                    }
                 }
             }
             .padding(.leading, 94)
@@ -1097,8 +1278,7 @@ struct ContentView: View {
         }
     }
 
-    private func startMediaFetch() {
-        guard let source = activeJob, source.state == "done" else { return }
+    private var providerKeys: [String: String] {
         var keys: [String: String] = [:]
         let pexels = pexelsKey.trimmingCharacters(in: .whitespaces)
         let pixabay = pixabayKey.trimmingCharacters(in: .whitespaces)
@@ -1106,9 +1286,26 @@ struct ContentView: View {
         if !pexels.isEmpty { keys["pexels"] = pexels }
         if !pixabay.isEmpty { keys["pixabay"] = pixabay }
         if !unsplash.isEmpty { keys["unsplash"] = unsplash }
-        runPlanJob("Media fetch") {
+        return keys
+    }
+
+    private func startMediaFetch(regenerate: Bool = false) {
+        guard let source = activeJob, source.state == "done" else { return }
+        let keys = providerKeys
+        runPlanJob(regenerate ? "Media regenerate" : "Media fetch") {
             try await engine.createMediaJob(sourceJobId: source.jobId,
-                                            apiKeys: keys)
+                                            apiKeys: keys,
+                                            regenerate: regenerate)
+        }
+    }
+
+    private func excludeAsset(provider: String, ref: String) {
+        guard let source = activeJob, source.state == "done" else { return }
+        let keys = providerKeys
+        runPlanJob("Replace excluded media") {
+            try await engine.createMediaJob(sourceJobId: source.jobId,
+                                            apiKeys: keys,
+                                            exclude: [(provider, ref)])
         }
     }
 

@@ -147,6 +147,35 @@ struct ScenePayload: Decodable, Equatable, Identifiable {
     var id: Int { sceneIndex }
 }
 
+/// One rendered output recorded in history.
+struct ProjectOutput: Decodable, Equatable {
+    let filePath: String
+    let style: String?
+    let duration: Double?
+    let createdAt: Double
+}
+
+/// One history entry from GET /projects (Phase 7).
+struct ProjectPayload: Decodable, Equatable, Identifiable {
+    let jobId: String
+    let url: String?
+    let videoId: String?
+    let title: String?
+    let uploader: String?
+    let duration: Double?
+    let audioPath: String?
+    let style: String?
+    let targetSeconds: Double?
+    let segmentStart: Double?
+    let createdAt: Double
+    let updatedAt: Double
+    let audioExists: Bool?
+    let hasPlan: Bool?
+    let outputs: [ProjectOutput]
+
+    var id: String { jobId }
+}
+
 /// Stored scene plan from GET /plan/<job_id>.
 struct PlanPayload: Decodable, Equatable {
     let style: String
@@ -380,15 +409,51 @@ final class EngineClient: ObservableObject {
     }
 
     /// Fetch licensed stock media for a stored plan. Keys go over loopback
-    /// only and are never persisted by the engine.
-    func createMediaJob(sourceJobId: String, apiKeys: [String: String]) async throws -> String {
+    /// only and are never persisted by the engine. `regenerate` refetches
+    /// every scene; `exclude` bans specific assets for this project.
+    func createMediaJob(sourceJobId: String, apiKeys: [String: String],
+                        regenerate: Bool = false,
+                        exclude: [(provider: String, ref: String)] = []) async throws -> String {
         struct Created: Decodable { let jobId: String }
-        let created: Created = try await post(path: "jobs",
-                                              body: ["kind": "media",
-                                                     "source_job_id": sourceJobId,
-                                                     "api_keys": apiKeys],
+        var body: [String: Any] = ["kind": "media",
+                                   "source_job_id": sourceJobId,
+                                   "api_keys": apiKeys]
+        if regenerate { body["regenerate"] = true }
+        if !exclude.isEmpty {
+            body["exclude"] = exclude.map {
+                ["provider": $0.provider, "provider_ref": $0.ref]
+            }
+        }
+        let created: Created = try await post(path: "jobs", body: body,
                                               timeout: 15)
         return created.jobId
+    }
+
+    /// History of all projects (survives relaunch).
+    func listProjects() async throws -> [ProjectPayload] {
+        struct Response: Decodable { let projects: [ProjectPayload] }
+        var request = URLRequest(url: baseURL.appendingPathComponent("projects"))
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let decoded: Response = try Self.decode(data: data, response: response)
+        return decoded.projects
+    }
+
+    /// Remove a project from history (optionally with its cached files;
+    /// rendered videos in Output/videos are never deleted).
+    func deleteProject(jobId: String, deleteFiles: Bool) async throws {
+        struct Deleted: Decodable { let deleted: Bool }
+        let _: Deleted = try await post(path: "projects/\(jobId)/delete",
+                                        body: ["delete_files": deleteFiles],
+                                        timeout: 15)
+    }
+
+    /// Safe cache cleanup: orphaned job/media dirs + old subtitle previews.
+    func runCleanup() async throws -> (removed: Int, freedBytes: Int) {
+        struct Result: Decodable { let removed: Int; let freedBytes: Int }
+        let result: Result = try await post(path: "cleanup", body: [:],
+                                            timeout: 60)
+        return (result.removed, result.freedBytes)
     }
 
     /// Render the final styled video from the media-annotated plan.
