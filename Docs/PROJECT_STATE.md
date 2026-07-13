@@ -95,8 +95,21 @@ bounce, word-timed handwritten stickers, phrase cut/paper wipe/sticker pop.
 Known behavior: after editing a lyric line, run Align again so doodle word
 stickers pick up the corrected words (they use aligned word tokens).
 
-## Next: Phase 7 — History and regeneration
+## Phase 7 — History and regeneration (complete)
 
-Persistent jobs/previews across relaunch, regenerate all/media-only,
-exclude asset, change style/duration/start, lyric edits, reveal project,
-safe cache cleanup.
+ProjectStore in `Cache/projects.db` records every ingest, plan settings and
+rendered output; `GET /projects`, delete, and `POST /cleanup` endpoints; the
+app shows History with resume (restores lyrics + plan), open video, reveal,
+delete, Regenerate Media (avoids all previous picks), per-scene exclude
+(persists across regenerations), and cache cleanup.
+Acceptance verified E2E: history + outputs survive engine restart;
+corrections persist (Phase 3 store); regenerate produced 4/4 brand-new
+assets with exclusions honored; cleanup removed an orphan job dir and a
+stale preview while the active project and all rendered videos survived.
+
+## Next: Phase 8 — YouTube publishing
+
+Official OAuth 2.0 + Data API, connect/disconnect, refresh tokens in
+Keychain, progress, metadata/privacy selection, private/unlisted test
+upload, result URL, retryable errors. Needs a Google Cloud project +
+OAuth client from the user when ready to test.
