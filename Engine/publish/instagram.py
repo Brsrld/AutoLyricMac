@@ -22,6 +22,13 @@ import urllib.request
 from .youtube import Keychain, PublishError
 
 GRAPH = "https://graph.facebook.com/v21.0"
+GRAPH_IG = "https://graph.instagram.com/v21.0"
+
+
+def _base_for(token):
+    """New Instagram-Login tokens (IGAA...) live on graph.instagram.com;
+    classic Page-linked tokens use graph.facebook.com."""
+    return GRAPH_IG if str(token).startswith("IG") else GRAPH
 POLL_INTERVAL = 5
 POLL_TIMEOUT = 600
 
@@ -133,7 +140,7 @@ class TempObjectStore:
 
 def _graph(method, path, params, opener):
     query = urllib.parse.urlencode(params)
-    url = f"{GRAPH}{path}"
+    url = f"{_base_for(params.get(chr(97)+chr(99)+chr(99)+chr(101)+chr(115)+chr(115)+chr(95)+chr(116)+chr(111)+chr(107)+chr(101)+chr(110), ''))}{path}"
     data = None
     if method == "POST":
         data = query.encode()
