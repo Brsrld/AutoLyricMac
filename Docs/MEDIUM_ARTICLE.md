@@ -2,8 +2,10 @@
 
 *Paste a YouTube link. Go make coffee. Come back to a 1080×1920 lyric video with word-perfect subtitles, scenes cut to the song's* meaning*, images dancing to the actual drum hits — and a "Publish Reel" button. Here's how we built AutoLyricMac on a Mac, mostly locally, occasionally for less than a cent.*
 
-![Rhythm-locked collage swaps](gifs/collage_rhythm.gif)
-*Images rotating on bass hits. The drummer is now our art director.*
+![Typing furiously](https://media.giphy.com/media/13HgwGsXF0aiGY/giphy.gif)
+*Me, promising myself this would be a weekend project.*
+
+> 🎬 **Demo spot:** drop your own screen-recording GIF of the collage swapping images on drum hits here (`Docs/gifs/collage_rhythm.gif` in the repo).
 
 ---
 
@@ -42,8 +44,8 @@ This layer got rebuilt the most. Final pipeline:
 
 Scenes cut on **sentences**, not beats — beats only drive micro-motion. Each line goes through a bilingual (EN/TR) lexicon that extracts subjects, emotion, and stock-search queries; add an Anthropic key and Claude Haiku does it with taste (*"Watch it fly by as the pendulum swings"* → `pendulum clock macro, moody light`). There's also a free-text **theme box** — write *"regret, passing time, lonely dark city"* and every scene, even instrumental ones, hunts imagery from that world.
 
-![Calm collage scene](gifs/collage_calm.gif)
-*Calm passage: one image, held long, breathing slowly. The "uzun hava" mode.*
+![Mind blown](https://media.giphy.com/media/26tn33aiTi1jkl6H6/giphy.gif)
+*The planner reading "pendulum swings" and actually searching for pendulum clocks.*
 
 ## Act IV: Pixels — Rented, Pooled, Never Repeated
 
@@ -51,11 +53,11 @@ Photos come from Pexels/Pixabay/Unsplash behind one protocol, ranked by relevanc
 
 For the Doodle style we fired the stock sites entirely. Every scene is **drawn from scratch** by FLUX — storybook ink-and-gouache, thick navy outlines, palette chosen by the lyric's emotion (melancholy → rainy indigo, joy → sunny yellows). And because static drawings are boring:
 
-![Line boil animation](gifs/doodle_boil.gif)
-*"Line boil": three subtly warped copies cycling at 6 fps. Costs zero, looks alive.*
+![Drawing magic](https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif)
+*"Line boil": three subtly warped copies of each drawing cycling at 6 fps. Costs zero, looks alive. (Real sample: `Docs/gifs/doodle_boil.gif` in the repo.)*
 
-![Word stickers popping](gifs/doodle_words.gif)
-*Each word pops onto its own paper blob exactly when it's sung.*
+![Chef's kiss](https://media.giphy.com/media/LmNwrBhejkK9EFP504/giphy.gif)
+*Each word pops onto its own paper blob exactly when it's sung. Chef's kiss.*
 
 ## Act V: Rhythm — A Metronome Is Not a Drummer
 
@@ -72,6 +74,9 @@ The meta-lesson of this act: **aesthetics don't come from code review, they come
 - **YouTube:** OAuth with PKCE over a loopback redirect, refresh token in the Keychain, chunked resumable upload with backoff.
 - **Instagram Reels:** the official Graph API wants a public HTTPS video URL, so the file visits a Cloudflare R2 bucket for ~90 seconds and gets deleted the moment Instagram confirms. The S3 SigV4 signer is 40 lines of stdlib. No boto3 was harmed.
 - At one point the user pasted their actual Instagram password into the chat. We refused, pointed at the official token flow, and gently suggested changing that password. *Never give your password to an AI. Not even a charming one.*
+
+![Suspicious look](https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif)
+*Us, staring at TLS handshake failures at 1 AM.*
 
 Field-war story: R2 uploads kept dying with TLS handshake failures. Not Python's fault, not Cloudflare's — the machine's **antivirus was man-in-the-middling TLS** with its own certificate. Fix: route object-storage traffic through system `curl`, which trusts the local chain. Sometimes the bug is standing behind you.
 
