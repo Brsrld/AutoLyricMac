@@ -17,7 +17,9 @@ Services/credentials policy: `Docs/SERVICES_AND_KEYS.md`.
 | Phase 1 — MVP gaps | `b7485a4` | AVAudioPlayer preview + in-app activity log; all Phase 1 acceptance criteria verified |
 | Phase 2 — analysis | `ab14b13` | librosa analysis (tempo/beats/onsets/energy/sections/repetition), pure `select_segment` scorer with reasoning, `analyze` job kind, Segment Selection UI with manual override; verified end-to-end |
 | Phase 3 — lyrics & sync | `d107c3a`…`7f5146c` | Lyrics providers (LRCLIB + local .lrc/.txt) with ranking and SQLite cache, canonical store with persistent corrections/Turkish translations, mlx-whisper word alignment with per-line/word confidence (uncertain + suspect flags), both subtitle systems (Archive tape strips EN+TR, Doodle navy word stickers) with safe-zone wrapping/dynamic placement, `lyrics`/`align`/`subtitle_preview` job kinds + `/lyrics` endpoints, Lyrics & Sync UI; 92 tests total; E2E verified |
-| Phase 4 — planning & media | `3ada36e`…`56941e0` | EN+TR lexicon semantics (LLM-optional interface), deterministic phrase-driven scene planner (energy bands, beat micro-motion, style rules, automatic preset recommendation with reasoning), Pexels/Pixabay/Unsplash adapters with fallback chain, ranking + hard rejects (no enlargement/stretch, no <1080p or too-short video, watermark tags), dHash dedup, attribution store, subject-aware crop + adaptation strategies, `plan`/`media` jobs + `/plan` endpoint, Scene Plan & Media UI with Keychain-held keys; 138 tests total |
+| Phase 4 — planning & media | `3ada36e`…`8bf85fc` | EN+TR lexicon semantics (LLM-optional interface), deterministic phrase-driven scene planner (energy bands, beat micro-motion, style rules, automatic preset recommendation with reasoning), Pexels/Pixabay/Unsplash adapters with fallback chain, ranking + hard rejects (no enlargement/stretch, no <1080p or too-short video, watermark tags), dHash dedup, attribution store, subject-aware crop + adaptation strategies, `plan`/`media` jobs + `/plan` endpoint, Scene Plan & Media UI with Keychain-held keys; live Pexels test verified |
+| Phase 5 — Archive render | see below | Final Archive Collage renderer + `render` job + UI; awaiting user visual approval |
+| Phase 6 — Doodle render | see below | Doodle library + Doodle Memory renderer; awaiting user visual approval |
 
 ## Environment
 
@@ -71,9 +73,30 @@ Services/credentials policy: `Docs/SERVICES_AND_KEYS.md`.
   correct attribution, and visually lyric-relevant results (embrace for
   "Hold me close", walking-in-field for "Walking home…").
 
-## Next: Phase 5 — Finalize Archive Collage
+## Phase 5 — Archive Collage renderer (implemented, awaiting user approval)
 
-Per `Docs/PHASES_AND_ACCEPTANCE.md`: artboard composition, negative space,
-varied framed photos, translucent blocks, monochrome analog treatment, slow
-editorial movement, irregular paper subtitles — rendered from the Phase 4
-scene plan + fetched media, then user approval.
+`render` job kind renders the media-annotated plan into the final video.
+Pure `scene_layout` enforces the style guide (photos 55–90 % width as framed
+objects, rotation 0.3–1.5°, grey/black/white translucent blocks, position
+banks for consecutive variety, zoom ≤1.10x); transitions/beat pulses/
+overlays come from the plan; EN+TR paper strips avoid faces (may lap the
+photo's bottom edge, collage-style). 18 s test render passes the output
+contract; QA frames inspected. **User must watch and approve
+`Output/videos/deadbeef_archiveCollage_*.mp4` (or a fresh render).**
+
+## Phase 6 — Doodle Memory renderer (implemented, awaiting user approval)
+
+Curated 19-asset procedural doodle library (`Engine/render/doodle_library.py`)
+covering all spec categories, tag-based selection; renderer warm-grades
+full-frame media (subject-crop/blur-fill, never stretch), anchors figure
+doodles on the lower third and sky doodles up top, slide-in/breathe/beat
+bounce, word-timed handwritten stickers, phrase cut/paper wipe/sticker pop.
+18 s test render passes the contract. **User approval pending.**
+Known behavior: after editing a lyric line, run Align again so doodle word
+stickers pick up the corrected words (they use aligned word tokens).
+
+## Next: Phase 7 — History and regeneration
+
+Persistent jobs/previews across relaunch, regenerate all/media-only,
+exclude asset, change style/duration/start, lyric edits, reveal project,
+safe cache cleanup.
