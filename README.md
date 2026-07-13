@@ -6,7 +6,18 @@ This application only processes music or media the user owns, licenses, or is au
 
 ## Status
 
-**Step 2 + Phase 0 complete.** The app auto-starts the local Python engine, inspects YouTube URLs for metadata (no download), and can run an authorized audio-download test: yt-dlp → FFmpeg (AAC/M4A) → ffprobe verification, with progress and cancellation. Phase 0 adds reference analysis (`Docs/REFERENCE_ANALYSIS.md`) and two 15-second 1080x1920 style prototypes (`Engine/render/`, outputs in `Output/prototypes/`) rendered from public-domain/CC0 media (`References/proto_media/ATTRIBUTION.json`). No AI or publishing integrations yet.
+**Phases 0–9 implemented** (see `Docs/PROJECT_STATE.md`): authorized audio
+ingestion, segment selection, lyrics with mlx-whisper word alignment and
+persistent corrections/Turkish translations, deterministic scene planning,
+licensed stock media (Pexels/Pixabay/Unsplash) with attribution, both final
+renderers (Archive Collage, Doodle Memory), history/regeneration/cleanup,
+and official-API publishing to YouTube and Instagram. Pending user steps:
+visual approval of the two style renders and live publishing credential
+tests. See `Docs/TROUBLESHOOTING.md` when something misbehaves.
+
+The full flow: paste an authorized URL → confirm authorization → ingest →
+analyze segment → fetch + align lyrics (edit/translate as needed) → build
+scene plan → fetch licensed media → render → preview → publish.
 
 ## Structure
 
@@ -21,6 +32,12 @@ This application only processes music or media the user owns, licenses, or is au
 | `Docs/` | Project documentation |
 
 ## Setup (one-time)
+
+```sh
+scripts/setup.sh   # Homebrew deps + venv + tests + release build
+```
+
+or manually:
 
 ```sh
 brew install ffmpeg yt-dlp python@3.12

@@ -121,8 +121,19 @@ and run one private test upload. Cost: free quota (uploads cost ~1600
 quota units of the 10k/day default). Revocation: Google Account →
 Security → Third-party access; Disconnect in the app deletes tokens.
 
-## Next: Phase 9 — Instagram publishing
+## Phase 9 — Instagram publishing (implemented; live test pending user)
 
-Official Meta Graph API with an eligible professional account, temporary
-HTTPS object storage (S3-compatible adapter), container publish/poll,
-cleanup. Needs Meta developer app + eligible account when ready to test.
+Official Graph API Reels flow (container → poll → publish → permalink),
+temporary S3-compatible storage (stdlib SigV4; object deleted right after
+publish), credentials in Keychain, connect verifies the professional
+account. 9 offline tests. **Pending (needs the user):** eligible
+professional IG account, Meta app long-lived token, and an R2/S3 bucket —
+then Connect Instagram in the app and publish one test Reel.
+
+## Phase 10 — Packaging (mostly complete)
+
+`scripts/setup.sh` (deps + venv + tests + release build, re-runnable,
+machine-independent paths), `Docs/TROUBLESHOOTING.md`, README onboarding,
+release build verified. **Pending (needs the user):** the two style
+approvals (Phase 5/6), live YouTube/Instagram credential tests, and one
+end-to-end run of the final flow with a real authorized song.
