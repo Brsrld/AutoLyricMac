@@ -349,10 +349,15 @@ def render_archive(plan, audio_path, out_path, progress=None):
         band = scene.get("energy_band", "normal")
         own_pool = pool_for(i)
         if band != "calm" and own_pool:
-            for p in own_pool[:2]:
+            main = (scene.get("media") or {}).get("file_path")
+            trio = [q for q in [main] + own_pool if q][:3]
+            # rotate roles: every variant shows the SAME images, only the
+            # large frame changes - swaps stay visually coherent
+            for r in range(1, len(trio)):
+                rotated = trio[r:] + trio[:r]
                 variants.append(build_scene_layer(
-                    {"media": {"file_path": p}}, layouts[i], i,
-                    [q for q in own_pool if q != p]))
+                    {"media": {"file_path": rotated[0]}}, layouts[i], i,
+                    rotated[1:]))
             # cadence: every beat when energetic, every 2nd beat when normal
             gap = beat_period * (1.0 if band == "energetic" else 2.0)
             hits = (scene.get("motion", {}).get("onsets")
@@ -409,12 +414,24 @@ def render_archive(plan, audio_path, out_path, progress=None):
             local = t_local / scene_len
             pulses = scene.get("motion", {}).get("pulse_beats", [])
 
-            layer = variant_layers[idx][0]
-            if len(variant_layers[idx]) > 1 and swap_beats[idx]:
-                passed = sum(1 for b in swap_beats[idx] if b <= t_local)
-                layer = variant_layers[idx][passed % len(variant_layers[idx])]
+            variants = variant_layers[idx]
+            layer = variants[0]
+            blend_prev, blend_p = None, 1.0
+            if len(variants) > 1 and swap_beats[idx]:
+                hits = [b for b in swap_beats[idx] if b <= t_local]
+                passed = len(hits)
+                layer = variants[passed % len(variants)]
+                if hits:
+                    since = t_local - hits[-1]
+                    if since < 0.3:            # swaps melt, never snap
+                        blend_prev = variants[(passed - 1) % len(variants)]
+                        blend_p = ease_in_out(since / 0.3)
             arr = _scene_frame(layer, layout, local, scene_len,
                                t_local, pulses)
+            if blend_prev is not None:
+                prev_arr = _scene_frame(blend_prev, layout, local,
+                                        scene_len, t_local, pulses)
+                arr = prev_arr * (1 - blend_p) + arr * blend_p
 
             # incoming transition from the previous scene
             trans = scene.get("transition") or {}
@@ -423,7 +440,7 @@ def render_archive(plan, audio_path, out_path, progress=None):
                 # refs breathe through white: most cuts become white fades
                 if trans.get("type") in ("crossfade", "block_wipe"):
                     # transition length breathes with the tempo (~2 beats)
-                    tdur = max(0.6, min(1.2, 2.0 * beat_period))
+                    tdur = max(0.9, min(1.5, 2.5 * beat_period))
                     trans = {"type": "fade_white", "duration": tdur}
                 prev = scenes[idx - 1]
                 prev_len = max(0.001, prev["end"] - prev["start"])
@@ -436,8 +453,8 @@ def render_archive(plan, audio_path, out_path, progress=None):
             # subtitle strip (enter 0.35s after transition, exit 0.25s)
             if subtitles[idx] is not None:
                 block, rect = subtitles[idx]
-                enter = min(1.0, max(0.0, (t_local - tdur) / 0.6))
-                exit_ = min(1.0, (scene["end"] - t) / 0.5)
+                enter = min(1.0, max(0.0, (t_local - tdur * 0.5) / 0.8))
+                exit_ = min(1.0, (scene["end"] - t) / 0.7)
                 alpha = ease_in_out(max(0.0, min(enter, exit_)))
                 if alpha > 0.01:
                     rise = (1.0 - ease_in_out(enter)) * 20
