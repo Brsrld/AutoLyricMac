@@ -200,6 +200,61 @@ def align_lyrics(line_texts, asr_words):
     return aligned, round(matched_ratio, 4), round(mean_confidence, 4)
 
 
+def align_lyrics_monotonic(line_texts, asr_words, min_ratio=0.45):
+    """Line-by-line forward alignment for repetitive lyrics.
+
+    A moving cursor guarantees monotonic timing: each line searches only
+    forward in the ASR stream for its best-matching window, so repeated
+    lines ("bülbül bülbül...") bind to successive occurrences instead of
+    all collapsing onto the first one. Unmatched lines stay untimed (the
+    LRC fallback can still rescue them).
+    """
+    asr_norm = [normalize_token(w["text"]) for w in asr_words]
+    aligned = []
+    cursor = 0
+    total_conf = matched_lines = 0.0
+    for li, text in enumerate(line_texts):
+        tokens = [t for t in (normalize_token(w) for w in text.split()) if t]
+        raws = [w for w in text.split() if normalize_token(w)]
+        best = (0.0, None)
+        if tokens and cursor < len(asr_words):
+            wlen = len(tokens)
+            for j in range(cursor, min(len(asr_words),
+                                       cursor + 400) - max(1, wlen) + 1):
+                window = asr_norm[j:j + wlen]
+                m = SequenceMatcher(None, tokens, window,
+                                    autojunk=False).ratio()
+                if m > best[0]:
+                    best = (m, j)
+                if m >= 0.72:
+                    best = (m, j)   # greedy: earliest good match wins
+                    break
+        words = []
+        if best[1] is not None and best[0] >= min_ratio:
+            j = best[1]
+            span = asr_words[j:j + len(tokens)]
+            start = span[0]["start"]
+            end = max(w["end"] for w in span)
+            end = max(end, start + 0.5)
+            n = len(raws)
+            for k, raw in enumerate(raws):
+                w = span[min(k, len(span) - 1)]
+                words.append({"text": raw, "start": w["start"],
+                              "end": w["end"], "confidence": round(best[0], 3)})
+            aligned.append({"line_index": li, "start": start, "end": end,
+                            "confidence": round(best[0], 3), "words": words})
+            cursor = j + len(span)
+            total_conf += best[0]
+            matched_lines += 1
+        else:
+            aligned.append({"line_index": li, "start": None, "end": None,
+                            "confidence": 0.0,
+                            "words": [{"text": r, "start": None, "end": None,
+                                       "confidence": 0.0} for r in raws]})
+    n = max(1, len(line_texts))
+    return aligned, round(matched_lines / n, 4), round(total_conf / n, 4)
+
+
 LRC_FALLBACK_CONFIDENCE = 0.6
 
 
