@@ -86,6 +86,28 @@ class TestAlignLyrics(unittest.TestCase):
         self.assertEqual([w["text"] for w in aligned[0]["words"]],
                          ["Hold,", "me!"])
 
+    def test_lrc_fallback_rescues_low_confidence_lines(self):
+        from lyrics.align import merge_lrc_fallback
+        aligned, _, _ = align_lyrics(["hold me close", "words nobody sang"],
+                                     asr(("hold", 1.0, 0.9), ("me", 1.4, 0.8),
+                                         ("close", 1.8, 1.0)))
+        rescued = merge_lrc_fallback(aligned, {1: (10.0, 13.0)})
+        self.assertEqual(rescued, 1)
+        self.assertAlmostEqual(aligned[1]["start"], 10.0)
+        self.assertAlmostEqual(aligned[1]["end"], 13.0)
+        self.assertEqual(aligned[1]["confidence"], 0.6)
+        self.assertTrue(all(w["start"] is not None
+                            for w in aligned[1]["words"]))
+        # the confidently-matched line is untouched
+        self.assertGreater(aligned[0]["confidence"], 0.8)
+        self.assertAlmostEqual(aligned[0]["start"], 1.0)
+
+    def test_lrc_fallback_ignores_lines_without_seed(self):
+        from lyrics.align import merge_lrc_fallback
+        aligned, _, _ = align_lyrics(["never sung"], [])
+        self.assertEqual(merge_lrc_fallback(aligned, {}), 0)
+        self.assertIsNone(aligned[0]["start"])
+
     def test_empty_inputs(self):
         aligned, ratio, conf = align_lyrics([], [])
         self.assertEqual(aligned, [])

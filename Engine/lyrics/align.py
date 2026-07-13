@@ -19,7 +19,8 @@ import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-DEFAULT_MODEL = "mlx-community/whisper-base-mlx"
+DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo"
+FALLBACK_MODEL = "mlx-community/whisper-base-mlx"
 INTERPOLATED_CONFIDENCE = 0.2
 MIN_WORD_DURATION = 0.08
 
@@ -197,3 +198,37 @@ def align_lyrics(line_texts, asr_words):
     else:
         matched_ratio = mean_confidence = 0.0
     return aligned, round(matched_ratio, 4), round(mean_confidence, 4)
+
+
+LRC_FALLBACK_CONFIDENCE = 0.6
+
+
+def merge_lrc_fallback(aligned, seed_spans):
+    """Hybrid alignment: where ASR failed, trust provider LRC timings.
+
+    `seed_spans` maps line_index -> (start, end) from synchronized lyrics.
+    Lines with low/no ASR confidence but a provider timestamp get that
+    timing (words spread evenly) at LRC_FALLBACK_CONFIDENCE — visibly less
+    certain than a real match, but never silently blank. Returns the count
+    of rescued lines; mutates `aligned` in place.
+    """
+    rescued = 0
+    for line in aligned:
+        seed = seed_spans.get(line["line_index"])
+        if seed is None or seed[0] is None:
+            continue
+        if line["confidence"] >= 0.45 and line["start"] is not None:
+            continue
+        start, end = float(seed[0]), float(seed[1] or seed[0] + 3.0)
+        end = max(end, start + 0.8)
+        line["start"], line["end"] = start, end
+        line["confidence"] = LRC_FALLBACK_CONFIDENCE
+        words = line.get("words") or []
+        if words:
+            step = (end - start) / len(words)
+            for k, w in enumerate(words):
+                w["start"] = round(start + k * step, 3)
+                w["end"] = round(start + (k + 1) * step, 3)
+                w["confidence"] = LRC_FALLBACK_CONFIDENCE
+        rescued += 1
+    return rescued

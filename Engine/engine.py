@@ -665,9 +665,19 @@ class Job:
         self._check_cancel()
 
         self.set(progress=0.7, message="Aligning lyrics to audio…")
+        from lyrics.align import merge_lrc_fallback
         line_texts = [ln["display_text"] for ln in payload["lines"]]
         aligned, matched_ratio, mean_confidence = align_lyrics(line_texts,
                                                                asr_words)
+        # hybrid: synced-lyrics timestamps rescue lines ASR could not hear
+        seed_spans = {ln["line_index"]: (ln["start"], ln["end"])
+                      for ln in payload["lines"]} if payload["synced"] else {}
+        rescued = merge_lrc_fallback(aligned, seed_spans)
+        if rescued:
+            mean_confidence = round(sum(l["confidence"] for l in aligned)
+                                    / max(1, len(aligned)), 4)
+            print(f"[engine] job {self.id} align: {rescued} line(s) timed "
+                  f"from synced lyrics fallback", flush=True)
         store.apply_alignment(self.source_job_id, aligned, matched_ratio,
                               mean_confidence)
 
