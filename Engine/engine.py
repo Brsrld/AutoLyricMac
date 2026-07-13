@@ -1165,6 +1165,19 @@ class Job:
             scene["media"] = {**chosen.summary(),
                               "file_path": str(path),
                               "adaptation": adaptation}
+            # variety pool: 2 more picks per scene so collage extras and
+            # beat-swaps never recycle the same few images
+            extra_paths = []
+            for k in range(2):
+                try:
+                    _c2, p2 = pick_and_fetch(
+                        ranked, self.source_job_id, 1000 + i * 10 + k,
+                        store, dest_dir, avoid_refs=avoid_refs)
+                    extra_paths.append(str(p2))
+                except MediaProviderError:
+                    break
+            if extra_paths:
+                scene["extra_media"] = extra_paths
             fetched += 1
 
         plan_path.write_text(json.dumps(plan, indent=1), encoding="utf-8")

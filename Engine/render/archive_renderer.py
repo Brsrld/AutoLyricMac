@@ -327,7 +327,7 @@ def render_archive(plan, audio_path, out_path, progress=None):
 
     layouts = [scene_layout(s, i) for i, s in enumerate(scenes)]
     def pool_for(i):
-        paths = []
+        paths = list(scenes[i].get("extra_media") or [])
         for off in (1, 2, 3):
             m = scenes[(i + off) % len(scenes)].get("media") or {}
             if m.get("file_path"):
@@ -345,7 +345,13 @@ def render_archive(plan, audio_path, out_path, progress=None):
         variants = [layers[i]]
         beats = []
         if scene.get("energy_band") == "energetic" and len(scenes) > 1:
+            own_pool = pool_for(i)
+            for p in (scene.get("extra_media") or [])[:2]:
+                variants.append(build_scene_layer(
+                    {"media": {"file_path": p}}, layouts[i], i, own_pool))
             for off in (1, 2):
+                if len(variants) >= 3:
+                    break
                 j = (i + off) % len(scenes)
                 if j != i and scenes[j].get("media"):
                     variants.append(build_scene_layer(scenes[j],
