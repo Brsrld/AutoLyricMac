@@ -17,32 +17,33 @@ def scene(motion_type="slow_push", amount=0.06):
 
 
 class TestSceneLayout(unittest.TestCase):
-    def test_photo_width_within_style_guide(self):
-        for i in range(24):
+    def test_photo_width_alternates_full_and_panel(self):
+        # reference videos: centered artwork, full-bleed-ish and small-panel
+        for i in range(0, 24, 2):
+            self.assertGreaterEqual(scene_layout(scene(), i)["photo_w"], 0.84)
+        for i in range(1, 24, 2):
             layout = scene_layout(scene(), i)
-            self.assertGreaterEqual(layout["photo_w"], 0.55)
-            self.assertLessEqual(layout["photo_w"], 0.90)
+            self.assertTrue(0.46 <= layout["photo_w"] <= 0.60)
 
-    def test_rotation_below_one_point_five_degrees_but_never_flat(self):
+    def test_rotation_nearly_straight(self):
         for i in range(24):
-            rot = scene_layout(scene(), i)["rotation"]
-            self.assertLessEqual(abs(rot), 1.5)
-            self.assertGreaterEqual(abs(rot), 0.3)
+            self.assertLessEqual(abs(scene_layout(scene(), i)["rotation"]),
+                                 0.35)
 
-    def test_blocks_use_grey_black_white_palette_and_sane_sizes(self):
+    def test_blocks_rare_and_whisper_faint(self):
+        # refs have no heavy blocks: at most one, very translucent
         for i in range(12):
-            for blk in scene_layout(scene(), i)["blocks"]:
+            blocks = scene_layout(scene(), i)["blocks"]
+            self.assertLessEqual(len(blocks), 1)
+            for blk in blocks:
                 r, g, b = blk["color"]
-                self.assertLess(max(r, g, b) - min(r, g, b), 12,
-                                "blocks must stay neutral grey/black/white")
-                self.assertTrue(0.1 <= blk["size"][0] <= 0.35)
-                self.assertTrue(120 <= blk["alpha"] <= 250,
-                                "blocks must stay translucent-ish")
+                self.assertLess(max(r, g, b) - min(r, g, b), 12)
+                self.assertLessEqual(blk["alpha"], 70)
 
-    def test_consecutive_scenes_differ_in_position(self):
-        positions = [scene_layout(scene(), i)["photo_pos"] for i in range(6)]
-        for a, b in zip(positions, positions[1:]):
-            self.assertNotAlmostEqual(a[0], b[0], places=2)
+    def test_consecutive_scenes_differ_in_scale(self):
+        widths = [scene_layout(scene(), i)["photo_w"] for i in range(6)]
+        for a, b in zip(widths, widths[1:]):
+            self.assertGreater(abs(a - b), 0.2)
 
     def test_motion_types_map_to_zoom_direction(self):
         push = scene_layout(scene("slow_push"), 0)

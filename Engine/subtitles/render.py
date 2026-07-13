@@ -37,7 +37,7 @@ CREAM_TR = (228, 216, 188)      # translation strip: slightly darker paper
 STICKER_WHITE = (250, 248, 244)
 UNCERTAIN_AMBER = (196, 138, 42)
 
-EN_SIZE, TR_SIZE, HAND_SIZE = 52, 40, 52
+EN_SIZE, TR_SIZE, HAND_SIZE = 40, 32, 52
 LINE_GAP = 10
 
 
@@ -73,16 +73,16 @@ def build_archive_subtitle(text, translation=None, seed=0, uncertain=False,
     pad_w = 26 * 2  # paper_sticker horizontal padding
     for i, line in enumerate(wrap_text(text, max_width - pad_w, measure_en)):
         strips.append(paper_sticker(
-            line, FONT_TYPEWRITER, EN_SIZE, text_fill=INK, bg=CREAM,
-            rotation=(-1.4, 1.1, -0.7, 1.4)[(seed + i) % 4],
-            seed=seed * 31 + i, jitter=5))
+            line, FONT_TYPEWRITER, EN_SIZE, text_fill=INK,
+            bg=(235, 224, 200), pad=(14, 6), rotation=0.0,
+            seed=seed * 31 + i, jitter=2))
     if translation:
         for i, line in enumerate(wrap_text(translation, max_width - pad_w,
                                            measure_tr)):
             strips.append(paper_sticker(
-                line, FONT_TYPEWRITER, TR_SIZE, text_fill=(74, 70, 62),
-                bg=CREAM_TR, rotation=(0.9, -1.2, 0.6)[(seed + i) % 3],
-                seed=seed * 47 + i + 100, jitter=4))
+                line, FONT_TYPEWRITER, TR_SIZE, text_fill=(94, 88, 78),
+                bg=(240, 231, 210), pad=(12, 5), rotation=0.0,
+                seed=seed * 47 + i + 100, jitter=2))
     if not strips:
         return None, (0, 0)
 

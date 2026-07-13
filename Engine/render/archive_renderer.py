@@ -57,15 +57,16 @@ def scene_layout(scene, index):
     amount = float(motion.get("amount", 0.05))
     mtype = motion.get("type", "slow_push")
 
-    photo_w = 0.55 + 0.35 * rng.random()               # 55–90 % of width
-    ax, ay = _PHOTO_ANCHORS[index % len(_PHOTO_ANCHORS)]
-    photo_pos = (min(ax + rng.uniform(-0.02, 0.03), 0.92 - photo_w * 0.9),
-                 ay + rng.uniform(-0.02, 0.04))
-    rotation = rng.uniform(-1.5, 1.5)
-    if abs(rotation) < 0.3:                            # always slightly askew
-        rotation = 0.45 if rotation >= 0 else -0.45
+    # refs: centered artwork; alternate full-ish and small-panel scenes
+    if index % 2 == 0:
+        photo_w = 0.86 + 0.06 * rng.random()
+    else:
+        photo_w = 0.48 + 0.10 * rng.random()
+    photo_pos = ((OVERSIZE - photo_w) / 2 + rng.uniform(-0.012, 0.012),
+                 (0.20 if index % 2 == 0 else 0.30) + rng.uniform(-0.02, 0.02))
+    rotation = rng.uniform(-0.35, 0.35)                # refs sit straight
 
-    n_blocks = 1 + (index % 2)
+    n_blocks = 1 if index % 3 == 1 else 0              # blocks are rare now
     blocks = []
     for b in range(n_blocks):
         color, alpha = BLOCK_PALETTE[(index * 2 + b + 1) % len(BLOCK_PALETTE)]
@@ -73,7 +74,7 @@ def scene_layout(scene, index):
             "pos": (rng.uniform(0.05, 0.62), rng.uniform(0.08, 0.72)),
             "size": (rng.uniform(0.18, 0.32), rng.uniform(0.14, 0.30)),
             "color": color,
-            "alpha": alpha,
+            "alpha": min(alpha, 70),
             "in_front": b == 1 and index % 4 == 3,     # occasional front layer
             "drift": (rng.uniform(-14, 14), rng.uniform(-10, 10)),
         })
@@ -338,6 +339,11 @@ def render_archive(plan, audio_path, out_path, progress=None):
             trans = scene.get("transition") or {}
             tdur = float(trans.get("duration") or 0)
             if idx > 0 and tdur > 0 and t_local < tdur:
+                # refs breathe through white: most cuts become white fades
+                if trans.get("type") in ("crossfade", "block_wipe"):
+                    trans = {"type": "fade_white",
+                             "duration": max(tdur, 0.6)}
+                    tdur = trans["duration"]
                 prev = scenes[idx - 1]
                 prev_len = max(0.001, prev["end"] - prev["start"])
                 prev_arr = _scene_frame(
