@@ -49,9 +49,11 @@ MEDIA_CACHE_DIR = REPO_ROOT / "Cache" / "media"
 PROJECTS_DB_PATH = REPO_ROOT / "Cache" / "projects.db"
 SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
 VIDEO_OUTPUT_DIR = REPO_ROOT / "Output" / "videos"
-SUBTITLE_STYLES = ("archiveCollage", "doodleMemory")
+SUBTITLE_STYLES = ("archiveCollage", "doodleMemory",
+                   "polaroidWall", "minimalDark")
 PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
-RENDER_STYLES = ("archiveCollage", "doodleMemory")
+RENDER_STYLES = ("archiveCollage", "doodleMemory",
+                 "polaroidWall", "minimalDark")
 
 # Minimum free disk space required before starting a download.
 MIN_FREE_BYTES = 500 * 1024 * 1024

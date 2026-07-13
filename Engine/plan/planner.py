@@ -60,6 +60,12 @@ _OVERLAYS = {
     "doodleMemory": ["warm_grain"],
 }
 
+for _alias in ("polaroidWall", "minimalDark"):
+    _DURATIONS[_alias] = _DURATIONS["archiveCollage"]
+    _MOTIONS[_alias] = _MOTIONS["archiveCollage"]
+    _TRANSITIONS[_alias] = _TRANSITIONS["archiveCollage"]
+    _OVERLAYS[_alias] = _OVERLAYS["archiveCollage"]
+
 _BANDS = ("lower", "center", "lower", "upper")
 
 MAX_AMBIENT_SCENE = 6.0     # instrumental gaps split into scenes this long

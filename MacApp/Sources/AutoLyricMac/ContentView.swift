@@ -427,6 +427,8 @@ struct ContentView: View {
                     Text("Automatic").tag("automatic")
                     Text("Archive Collage").tag("archiveCollage")
                     Text("Doodle Memory").tag("doodleMemory")
+                    Text("Polaroid Wall").tag("polaroidWall")
+                    Text("Minimal Dark").tag("minimalDark")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

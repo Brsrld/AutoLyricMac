@@ -29,6 +29,20 @@ from subtitles.layout import Rect, place_block
 from subtitles.render import build_archive_subtitle
 
 OVERSIZE = 1.12          # artboard is rendered larger than the frame for drift
+
+# style variants that reuse this renderer with a different visual language
+VARIANTS = {
+    "archiveCollage": {"canvas": (250, 249, 247), "rot": 0.35,
+                       "border": "even", "sub_bg": (235, 224, 200),
+                       "sub_ink": (58, 55, 50), "grade": "soft"},
+    "polaroidWall":   {"canvas": (188, 154, 110), "rot": 3.5,
+                       "border": "polaroid", "sub_bg": (250, 248, 242),
+                       "sub_ink": (60, 56, 50), "grade": "soft"},
+    "minimalDark":    {"canvas": (16, 16, 20), "rot": 0.0,
+                       "border": "none", "sub_bg": (28, 28, 34),
+                       "sub_ink": (238, 236, 230), "grade": "dark"},
+}
+_V = VARIANTS["archiveCollage"]   # active variant; render_archive swaps it
 BLOCK_PALETTE = [        # translucent layered rectangles (grey/black/white)
     ((120, 118, 114), 200),
     ((60, 58, 56), 225),
@@ -64,7 +78,7 @@ def scene_layout(scene, index):
         photo_w = 0.48 + 0.10 * rng.random()
     photo_pos = ((OVERSIZE - photo_w) / 2 + rng.uniform(-0.012, 0.012),
                  (0.20 if index % 2 == 0 else 0.30) + rng.uniform(-0.02, 0.02))
-    rotation = rng.uniform(-0.35, 0.35)                # refs sit straight
+    rotation = rng.uniform(-_V["rot"], _V["rot"]) if _V["rot"] else 0.0
 
     n_blocks = 1 if index % 3 == 1 else 0              # blocks are rare now
     blocks = []
@@ -168,7 +182,8 @@ def _load_scene_photo(scene):
 def build_scene_layer(scene, layout, seed, pool=()):
     """Oversized artboard: paper + blocks + framed monochrome photo."""
     bw, bh = int(W * OVERSIZE), int(H * OVERSIZE)
-    board = Image.fromarray(paper_canvas(seed=7 + seed)).resize(
+    board = Image.fromarray(paper_canvas(color=_V["canvas"],
+                                         seed=7 + seed)).resize(
         (bw, bh), Image.BILINEAR)
 
     front_blocks = []
@@ -183,18 +198,32 @@ def build_scene_layer(scene, layout, seed, pool=()):
 
     photo = _load_scene_photo(scene)
     if photo is not None:
-        photo = soft_archive_color(photo)
+        if _V["grade"] == "dark":
+            from PIL import ImageEnhance
+            photo = ImageEnhance.Contrast(
+                ImageEnhance.Color(photo).enhance(0.85)).enhance(1.05)
+        else:
+            photo = soft_archive_color(photo)
         pw = int(bw * layout["photo_w"])
         ph = min(int(pw * photo.height / photo.width),
                  int(bh * layout["max_photo_h"]))
         from proto_common import cover_resize
         photo = cover_resize(photo, pw, ph)
 
-        # white matte border -> framed object, not a background
-        border = max(10, pw // 60)
-        framed = Image.new("RGB", (pw + border * 2, ph + border * 2),
-                           (246, 244, 239))
-        framed.paste(photo, (border, border))
+        # frame treatment per variant
+        if _V["border"] == "polaroid":
+            border = max(14, pw // 40)
+            framed = Image.new("RGB", (pw + border * 2,
+                                       ph + border * 2 + border * 4),
+                               (250, 249, 245))
+            framed.paste(photo, (border, border))
+        elif _V["border"] == "none":
+            framed = photo
+        else:
+            border = max(10, pw // 60)
+            framed = Image.new("RGB", (pw + border * 2, ph + border * 2),
+                               (246, 244, 239))
+            framed.paste(photo, (border, border))
 
         rotated = framed.convert("RGBA").rotate(
             layout["rotation"], expand=True, resample=Image.BICUBIC,
@@ -316,6 +345,8 @@ def _dust_layer(shape, rng):
 # ---------------------------------------------------------------------------
 
 def render_archive(plan, audio_path, out_path, progress=None):
+    global _V
+    _V = VARIANTS.get(plan.get("style"), VARIANTS["archiveCollage"])
     """Render the full Archive Collage video for a media-annotated plan.
 
     Returns the list of QA frame paths written next to the video.
@@ -381,7 +412,8 @@ def render_archive(plan, audio_path, out_path, progress=None):
             continue
         block, size = build_archive_subtitle(
             scene["lyric"], scene.get("translation"), seed=i,
-            uncertain=bool(scene.get("uncertain")))
+            uncertain=bool(scene.get("uncertain")),
+            bg=_V["sub_bg"], ink=_V["sub_ink"])
         if block is None:
             subtitles.append(None)
             continue
