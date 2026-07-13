@@ -120,6 +120,19 @@ def subtitle_avoid_rect(layout):
     return Rect(rect.x, rect.y, rect.w, rect.h * 0.62)
 
 
+def soft_archive_color(img):
+    """Color archival grade: muted saturation, lifted blacks, softened
+    contrast, faint warmth — analog and editorial but no forced monochrome."""
+    from PIL import ImageEnhance
+    img = ImageEnhance.Color(img).enhance(0.68)
+    img = ImageEnhance.Contrast(img).enhance(0.90)
+    arr = np.asarray(img, dtype=np.float32)
+    arr = arr * 0.88 + 22.0                       # lift blacks, soften whites
+    arr[..., 0] *= 1.03                           # faint warm cast
+    arr[..., 2] *= 0.97
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+
+
 # ---------------------------------------------------------------------------
 # Layer building
 # ---------------------------------------------------------------------------
@@ -152,7 +165,7 @@ def build_scene_layer(scene, layout, seed):
 
     photo = _load_scene_photo(scene)
     if photo is not None:
-        photo = mono_archive(photo)
+        photo = soft_archive_color(photo)
         pw = int(bw * layout["photo_w"])
         ph = min(int(pw * photo.height / photo.width),
                  int(bh * layout["max_photo_h"]))
