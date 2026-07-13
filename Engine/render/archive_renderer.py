@@ -247,7 +247,7 @@ def _fade_alpha(img, alpha):
 # Frame sampling
 # ---------------------------------------------------------------------------
 
-def _beat_pulse(t, pulse_beats, strength=0.004, decay=0.14):
+def _beat_pulse(t, pulse_beats, strength=0.009, decay=0.16):
     pulse = 0.0
     for b in pulse_beats:
         dt = t - b
@@ -346,17 +346,20 @@ def render_archive(plan, audio_path, out_path, progress=None):
     for i, scene in enumerate(scenes):
         variants = [layers[i]]
         beats = []
-        if scene.get("energy_band") == "energetic":
-            own_pool = pool_for(i)
+        band = scene.get("energy_band", "normal")
+        own_pool = pool_for(i)
+        if band != "calm" and own_pool:
             for p in own_pool[:2]:
                 variants.append(build_scene_layer(
                     {"media": {"file_path": p}}, layouts[i], i,
                     [q for q in own_pool if q != p]))
+            # cadence: every beat when energetic, every 2nd beat when normal
+            gap = beat_period * (1.0 if band == "energetic" else 2.0)
             hits = (scene.get("motion", {}).get("onsets")
                     or scene.get("motion", {}).get("pulse_beats", []))
             last = -10.0
             for b in hits:
-                if b - last >= beat_period:   # tempo-locked swap cadence
+                if b - last >= gap:
                     beats.append(b)
                     last = b
         variant_layers.append(variants)
