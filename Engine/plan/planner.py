@@ -109,7 +109,8 @@ def recommend_style(emotion_totals, tempo_bpm):
 
 
 def build_scene_plan(lines, analysis, style, segment_start, segment_end,
-                     semantics_fn=extract_semantics, title_hint=""):
+                     semantics_fn=extract_semantics, title_hint="",
+                     extra_queries=()):
     """Build the structured scene plan for a segment.
 
     `lines`: lyric dicts with absolute start/end (only timed lines are used):
@@ -160,8 +161,10 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
         for s in semantics_fn(ln["display_text"])["subjects"]:
             if s not in all_subjects:
                 all_subjects.append(s)
-    song_queries = song_context_queries(title_hint, emotion_totals,
+    song_queries = list(extra_queries) + [
+        q for q in song_context_queries(title_hint, emotion_totals,
                                         all_subjects)
+        if q not in extra_queries]
 
     # --- build scenes -------------------------------------------------------
     scenes = []
@@ -187,6 +190,9 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
 
         subjects = sem["subjects"]
         queries = list(sem["queries"]) if sem["matched"] else []
+        # the user's theme leads even on matched lines (slot 2, cap 5)
+        if extra_queries and queries:
+            queries.insert(1, extra_queries[0])
         # no lexicon match (or instrumental): search the song's own context
         # (title + dominant mood) instead of meaningless abstract textures
         for q in song_queries:

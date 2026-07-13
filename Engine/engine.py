@@ -867,9 +867,27 @@ class Job:
             project.get("title") or payload.get("title"),
             payload.get("artist")]))
         theme = self.publish_meta.get("theme", "")
+        theme_queries = []
         if theme:
             # user-provided theme drives song-level queries + LLM directions
             title_hint = f"{title_hint} — theme: {theme}" if title_hint else theme
+            from plan.semantic import extract_semantics as _sem
+            from lyrics.translate import (ensure_argos_pair, looks_turkish,
+                                          _argos_translate)
+            theme_en = theme
+            try:
+                if looks_turkish([theme]) and ensure_argos_pair("tr", "en"):
+                    theme_en = _argos_translate(theme, "tr", "en")
+            except Exception:
+                pass
+            clean = theme_en.replace(",", " ").strip()
+            if clean:
+                theme_queries.append(f"{clean.lower()} cinematic mood"[:80])
+            for q in _sem(f"{theme} {theme_en}")["queries"][:2]:
+                if q not in theme_queries and "abstract light" not in q:
+                    theme_queries.append(q)
+            print(f"[engine] job {self.id} plan: theme queries "
+                  f"{theme_queries}", flush=True)
         semantics_fn = None
         try:
             from publish.youtube import Keychain
@@ -888,7 +906,7 @@ class Job:
         kwargs = {"semantics_fn": semantics_fn} if semantics_fn else {}
         plan = build_scene_plan(payload["lines"], analysis, self.style,
                                 seg_start, seg_end, title_hint=title_hint,
-                                **kwargs)
+                                extra_queries=theme_queries, **kwargs)
         plan["source_job_id"] = self.source_job_id
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
