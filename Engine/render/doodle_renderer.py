@@ -160,9 +160,15 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
     prepared = []      # per scene: doodle sprite + layout + subtitle stickers
     for i, scene in enumerate(scenes):
         name = pick_doodle(scene.get("subjects"), i)
-        layout = doodle_layout(i, name, is_ground_anchored(name))
-        sprite = build_doodle(name, height=int(layout["height_frac"] * H))
-        d_rect = doodle_screen_rect(layout, sprite.width / sprite.height)
+        if name is not None:   # doodles appear only when lyric-relevant
+            layout = doodle_layout(i, name, is_ground_anchored(name))
+            sprite = build_doodle(name, height=int(layout["height_frac"] * H))
+            d_rect = doodle_screen_rect(layout,
+                                        sprite.width / sprite.height)
+            avoid = [d_rect]
+        else:
+            layout = sprite = None
+            avoid = []
 
         stickers = None
         translation = None
@@ -177,7 +183,7 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
                                                     seed=i)
                 tr_h = (tr_block.height + 10) if tr_block else 0
                 s_rect = place_block((size[0], size[1] + tr_h),
-                                     avoid=[d_rect], preferred=band, seed=i)
+                                     avoid=avoid, preferred=band, seed=i)
                 word_times = [w.get("start") for w in words] if words else []
                 stickers = (items, s_rect, word_times)
                 if tr_block:
@@ -217,17 +223,18 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
 
         # doodle: slide-in entrance, breathe, beat micro-bounce
         sprite, layout = prep["sprite"], prep["layout"]
-        enter = ease_in_out(min(1.0, t_local / 0.3))
-        breathe = 1.0 + 0.028 * math.sin(2 * math.pi * t_local / 1.8)
-        dh = int(layout["height_frac"] * H * breathe)
-        dw = int(dh * sprite.width / sprite.height)
-        scaled = sprite.resize((max(1, dw), max(1, dh)), Image.BILINEAR)
-        x = int(layout["x_center"] * W - dw / 2
-                + (1 - enter) * layout["side"] * 90)
-        y = int(layout["bottom_frac"] * H - dh
-                + _bounce(t_local, pulses))
-        frame.paste(_fade_alpha(scaled, enter), (x, y),
-                    _fade_alpha(scaled, enter))
+        if sprite is not None:
+            enter = ease_in_out(min(1.0, t_local / 0.3))
+            breathe = 1.0 + 0.028 * math.sin(2 * math.pi * t_local / 1.8)
+            dh = int(layout["height_frac"] * H * breathe)
+            dw = int(dh * sprite.width / sprite.height)
+            scaled = sprite.resize((max(1, dw), max(1, dh)), Image.BILINEAR)
+            x = int(layout["x_center"] * W - dw / 2
+                    + (1 - enter) * layout["side"] * 90)
+            y = int(layout["bottom_frac"] * H - dh
+                    + _bounce(t_local, pulses))
+            frame.paste(_fade_alpha(scaled, enter), (x, y),
+                        _fade_alpha(scaled, enter))
 
         # word stickers pop in at their aligned times
         if prep["stickers"]:

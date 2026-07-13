@@ -62,11 +62,14 @@ class TestPickDoodle(unittest.TestCase):
         self.assertEqual(pick_doodle(["window"], 0), "window_frame")
         self.assertEqual(pick_doodle(["stone"], 0), "stone_pile")
 
-    def test_no_match_falls_back_and_varies(self):
-        picks = {pick_doodle(["zzz"], i) for i in range(4)}
-        self.assertGreater(len(picks), 1)
-        for name in picks:
-            self.assertIn(name, LIBRARY)
+    def test_no_match_means_no_doodle(self):
+        for i in range(4):
+            self.assertIsNone(pick_doodle(["zzz"], i))
+        self.assertIsNone(pick_doodle([], 0))
+
+    def test_synonyms_map_to_library(self):
+        self.assertEqual(pick_doodle(["nightingale"], 0), "flying_birds")
+        self.assertEqual(pick_doodle(["bülbül"], 0), "flying_birds")
 
     def test_ties_vary_by_index_deterministically(self):
         a = pick_doodle(["love"], 0)

@@ -387,24 +387,30 @@ LIBRARY = {
     "raindrops": (raindrops, ("rain", "water", "sea", "tears"), False),
 }
 
-_FALLBACK_ORDER = ("standing_figure", "window_frame", "flying_birds",
-                   "photo_frame")
+# loose synonyms so LLM/loose subjects still hit library tags
+_SYNONYMS = {"bird": "sky", "birds": "sky", "nightingale": "sky",
+             "kuş": "sky", "bülbül": "sky", "gül": "flowers",
+             "rose": "flowers", "mountain": "stone", "dağ": "stone",
+             "village": "home", "köy": "home", "pencere": "window",
+             "yol": "road", "gece": "night", "ay": "moon"}
 
 
 def pick_doodle(subjects, index):
-    """Best-matching doodle name for a scene's subjects (pure).
+    """Best-matching doodle for a scene's subjects, or None (pure).
 
-    Scores by tag overlap; ties break deterministically by index so repeated
-    subjects across scenes still vary. Falls back to a neutral rotation.
+    A doodle only appears when it genuinely relates to the lyric line —
+    no match means NO doodle (an unrelated bird/window/figure is worse
+    than none). Ties break deterministically by index for variety.
     """
-    subjects = [s.lower() for s in (subjects or [])]
+    subjects = [_SYNONYMS.get(s.lower(), s.lower())
+                for s in (subjects or [])]
     scored = []
     for name, (_builder, tags, _ground) in LIBRARY.items():
         overlap = sum(1 for s in subjects if s in tags)
         if overlap:
             scored.append((overlap, name))
     if not scored:
-        return _FALLBACK_ORDER[index % len(_FALLBACK_ORDER)]
+        return None
     scored.sort(key=lambda t: (-t[0], t[1]))
     best = [name for score, name in scored if score == scored[0][0]]
     return best[index % len(best)]
