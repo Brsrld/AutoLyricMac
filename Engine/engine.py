@@ -654,13 +654,28 @@ class Job:
             self.fail("not_found", "Fetch lyrics before aligning.")
             return
 
-        self.set(state="analyzing", progress=0.1,
+        # isolate vocals first: instruments blur Whisper's word timestamps
+        self.set(state="analyzing", progress=0.05,
+                 message="Separating vocals for precise timing (Demucs)…")
+        align_audio = source_audio
+        try:
+            from lyrics.separate import separate_vocals
+            vocals = separate_vocals(
+                source_audio,
+                log=lambda m: print(f"[engine] job {self.id} align: {m}",
+                                    flush=True))
+            if vocals is not None:
+                align_audio = vocals
+        except Exception:
+            pass
+
+        self.set(progress=0.35,
                  message="Transcribing vocals (local Whisper)…")
         try:
             from lyrics.translate import looks_turkish as _ltr
             lang_hint = "tr" if _ltr([ln["display_text"]
                                       for ln in payload["lines"]]) else None
-            asr_words, source_lang = transcribe_words(source_audio,
+            asr_words, source_lang = transcribe_words(align_audio,
                                                       language=lang_hint,
                                                       ffmpeg=FFMPEG)
         except Exception as exc:
