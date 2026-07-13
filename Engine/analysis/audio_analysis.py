@@ -50,27 +50,39 @@ def analyze_audio(audio_path, ffmpeg, progress=None):
         duration = float(len(y) / sr)
 
         report(0.35, "Detecting tempo and beats…")
-        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-        beats = librosa.frames_to_time(beat_frames, sr=sr).tolist()
+        # short/sparse audio (e.g. mostly speech or silence) can break the
+        # music-oriented detectors; degrade gracefully instead of failing
+        try:
+            tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+            beats = librosa.frames_to_time(beat_frames, sr=sr).tolist()
+        except Exception:
+            tempo, beats = 100.0, []
 
         report(0.55, "Detecting onsets and energy…")
-        onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time").tolist()
+        try:
+            onsets = librosa.onset.onset_detect(y=y, sr=sr, units="time").tolist()
+        except Exception:
+            onsets = []
         hop = int(sr * HOP_SECONDS)
         rms = librosa.feature.rms(y=y, frame_length=hop * 2, hop_length=hop)[0]
         rms = rms / (rms.max() or 1.0)
 
         report(0.75, "Finding section boundaries…")
         # spectral-novelty section estimate via agglomerative segmentation
-        n_sections = max(4, min(12, int(duration / 30)))
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-        bounds = librosa.segment.agglomerative(chroma, k=n_sections)
-        section_times = librosa.frames_to_time(bounds, sr=sr).tolist()
+        try:
+            n_sections = max(4, min(12, int(duration / 30)))
+            chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+            bounds = librosa.segment.agglomerative(chroma, k=n_sections)
+            section_times = librosa.frames_to_time(bounds, sr=sr).tolist()
 
-        # repetition proxy: per-window self-similarity of chroma (chorus-ish)
-        report(0.9, "Estimating repetition…")
-        rec = librosa.segment.recurrence_matrix(
-            librosa.util.sync(chroma, bounds), mode="affinity", sym=True)
-        section_repetition = rec.sum(axis=0).tolist()
+            # repetition proxy: self-similarity of chroma (chorus-ish)
+            report(0.9, "Estimating repetition…")
+            rec = librosa.segment.recurrence_matrix(
+                librosa.util.sync(chroma, bounds), mode="affinity", sym=True)
+            section_repetition = rec.sum(axis=0).tolist()
+        except Exception:
+            section_times = [0.0, duration / 2]
+            section_repetition = [0.5, 0.5]
 
         return {
             "duration": duration,

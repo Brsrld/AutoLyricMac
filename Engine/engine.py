@@ -21,6 +21,7 @@ HTTP API (127.0.0.1 only):
     POST /jobs/<id>/cancel      -> request cancellation
     GET  /lyrics/<job_id>       -> canonical lyrics with timing/confidence
     POST /lyrics/<job_id>/line  {"line_index": N, "corrected_text"?, "translation"?}
+    GET  /plan/<job_id>         -> stored scene plan (with media annotations)
 """
 
 import argparse
@@ -38,13 +39,16 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 DEFAULT_PORT = 8765
-ENGINE_VERSION = "0.3"
+ENGINE_VERSION = "0.4"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_JOBS_DIR = REPO_ROOT / "Cache" / "jobs"
 LYRICS_DB_PATH = REPO_ROOT / "Cache" / "lyrics.db"
+MEDIA_DB_PATH = REPO_ROOT / "Cache" / "media.db"
+MEDIA_CACHE_DIR = REPO_ROOT / "Cache" / "media"
 SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
 SUBTITLE_STYLES = ("archiveCollage", "doodleMemory")
+PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
 
 # Minimum free disk space required before starting a download.
 MIN_FREE_BYTES = 500 * 1024 * 1024
@@ -181,7 +185,8 @@ class Job:
 
     def __init__(self, url=None, video_id=None, kind="download",
                  source_job_id=None, target_seconds=None, start_override=None,
-                 artist=None, title=None, style=None, segment_start=None):
+                 artist=None, title=None, style=None, segment_start=None,
+                 api_keys=None):
         self.id = new_job_id()
         self.kind = kind
         self.url = url
@@ -193,6 +198,9 @@ class Job:
         self.title = title
         self.style = style
         self.segment_start = segment_start
+        # provider API keys are held in memory for this job only —
+        # never logged, never persisted, never included in snapshots
+        self.api_keys = api_keys or {}
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
         self.message = "Queued"
@@ -239,6 +247,10 @@ class Job:
                 self._run_align()
             elif self.kind == "subtitle_preview":
                 self._run_subtitle_preview()
+            elif self.kind == "plan":
+                self._run_plan()
+            elif self.kind == "media":
+                self._run_media()
             else:
                 self._run_pipeline()
         except CancelledError:
@@ -672,6 +684,140 @@ class Job:
                          "line_count": len(lines),
                          "style": self.style})
 
+    def _plan_path(self):
+        return job_dir_for(self.source_job_id) / "scene_plan.json"
+
+    def _run_plan(self):
+        """Analyze audio + stored lyrics into a structured scene plan."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from analysis.audio_analysis import analyze_audio
+        from lyrics.store import LyricsStore
+        from plan.planner import build_scene_plan
+
+        source_audio = self._source_audio()
+        if source_audio is None:
+            return
+        payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(self.source_job_id)
+        if payload is None or not payload.get("aligned"):
+            self.fail("not_found", "Fetch and align lyrics before planning scenes.")
+            return
+
+        seg_start = float(self.segment_start or 0.0)
+        seg_end = seg_start + float(self.target_seconds)
+
+        self.set(state="analyzing", progress=0.1,
+                 message="Analyzing audio for scene planning…")
+        try:
+            analysis = analyze_audio(source_audio, FFMPEG,
+                                     progress=lambda f, m: self.set(
+                                         progress=0.1 + 0.6 * f, message=m))
+        except Exception as exc:
+            self.fail("analysis_failed", f"Audio analysis failed: {exc}")
+            return
+        self._check_cancel()
+
+        self.set(progress=0.8, message="Planning scenes from lyric meaning…")
+        plan = build_scene_plan(payload["lines"], analysis, self.style,
+                                seg_start, seg_end)
+        plan["source_job_id"] = self.source_job_id
+        self._plan_path().write_text(json.dumps(plan, indent=1),
+                                     encoding="utf-8")
+        print(f"[engine] job {self.id} plan: {plan['scene_count']} scenes, "
+              f"style {plan['style']} (recommended {plan['recommended_style']}: "
+              f"{plan['recommendation_reason']})", flush=True)
+        self.set(state="done", progress=1.0,
+                 message=f"Scene plan ready: {plan['scene_count']} scenes "
+                         f"({plan['lyric_scene_count']} lyric), "
+                         f"style {plan['style']}.",
+                 result={
+                     "scene_count": plan["scene_count"],
+                     "lyric_scene_count": plan["lyric_scene_count"],
+                     "style": plan["style"],
+                     "recommended_style": plan["recommended_style"],
+                     "recommendation_reason": plan["recommendation_reason"],
+                 })
+
+    def _run_media(self):
+        """Fetch licensed stock media for every scene in the stored plan."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from media.crop import adaptation_plan
+        from media.providers import (MediaProviderError, build_providers,
+                                     search_all)
+        from media.ranking import rank_media
+        from media.store import MediaStore, pick_and_fetch
+
+        if self._source_audio() is None:
+            return
+        plan_path = self._plan_path()
+        if not plan_path.exists():
+            self.fail("not_found", "Build a scene plan before fetching media.")
+            return
+        providers = build_providers(self.api_keys)
+        if not providers:
+            self.fail("no_api_keys",
+                      "Add at least one stock-provider API key (Pexels "
+                      "recommended) in the app's Stock Media Keys section.")
+            return
+
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        store = MediaStore(MEDIA_DB_PATH)
+        dest_dir = MEDIA_CACHE_DIR / self.source_job_id
+        scenes = plan["scenes"]
+        fetched, provider_errors, scene_errors = 0, [], []
+        for i, scene in enumerate(scenes):
+            self._check_cancel()
+            self.set(state="downloading",
+                     progress=0.05 + 0.9 * (i / max(1, len(scenes))),
+                     message=f"Fetching media for scene {i + 1}/{len(scenes)}…")
+            candidates, errors = search_all(providers, scene["queries"],
+                                            kind="photo")
+            provider_errors.extend(e for e in errors
+                                   if e not in provider_errors)
+            ranked, rejected = rank_media(candidates, scene,
+                                          scene_duration=scene["duration"])
+            for cand, reason in rejected[:3]:
+                print(f"[engine] job {self.id} media: rejected "
+                      f"{cand.provider}/{cand.provider_ref}: {reason}",
+                      flush=True)
+            try:
+                chosen, path = pick_and_fetch(
+                    ranked, self.source_job_id, i, store, dest_dir,
+                    log=lambda m: print(f"[engine] job {self.id} media: {m}",
+                                        flush=True))
+            except MediaProviderError as exc:
+                scene_errors.append(f"scene {i}: {exc}")
+                scene["media"] = None
+                continue
+            adaptation = adaptation_plan(chosen.width, chosen.height,
+                                         plan["style"])
+            scene["media"] = {**chosen.summary(),
+                              "file_path": str(path),
+                              "adaptation": adaptation}
+            fetched += 1
+
+        plan_path.write_text(json.dumps(plan, indent=1), encoding="utf-8")
+        if fetched == 0:
+            detail = "; ".join((provider_errors + scene_errors)[:3])
+            self.fail("media_failed", f"No media could be fetched. {detail}")
+            return
+        message = f"Media ready for {fetched}/{len(scenes)} scenes."
+        if scene_errors:
+            message += f" {len(scene_errors)} scene(s) had no usable result."
+        self.set(state="done", progress=1.0, message=message,
+                 result={
+                     "fetched_count": fetched,
+                     "scene_count": len(scenes),
+                     "provider_errors": provider_errors,
+                     "scene_errors": scene_errors,
+                     "attribution": [s["media"] and {
+                         "scene_index": s["scene_index"],
+                         "provider": s["media"]["provider"],
+                         "creator": s["media"]["creator"],
+                         "license": s["media"]["license"],
+                         "page_url": s["media"]["page_url"],
+                     } for s in scenes],
+                 })
+
     def _run_subprocess(self, cmd):
         """Run a tool with list args (never a shell); poll for cancellation."""
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -769,6 +915,18 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, payload)
             return
+        m = re.match(r"^/plan/([0-9a-f]{32})$", self.path)
+        if m:
+            try:
+                plan_path = job_dir_for(m.group(1)) / "scene_plan.json"
+            except ValueError:
+                plan_path = None
+            if plan_path is None or not plan_path.exists():
+                self._send_json(404, {"error_code": "not_found",
+                                      "message": "No scene plan stored for this job."})
+                return
+            self._send_json(200, json.loads(plan_path.read_text(encoding="utf-8")))
+            return
         self._send_json(404, {"error_code": "not_found", "message": "Unknown endpoint."})
 
     def do_POST(self):
@@ -790,7 +948,42 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             kind = body.get("kind", "download")
-            if kind in ("lyrics", "align", "subtitle_preview"):
+            if kind in ("plan", "media"):
+                source_id = body.get("source_job_id", "")
+                if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
+                    self._send_json(400, {"error_code": "not_found",
+                                          "message": "A valid 'source_job_id' is required."})
+                    return
+                if kind == "plan":
+                    style = body.get("style", "automatic")
+                    if style not in PLAN_STYLES:
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": f"'style' must be one of {PLAN_STYLES}."})
+                        return
+                    try:
+                        target = float(body.get("target_seconds", 0))
+                        seg_start = max(0.0, float(body.get("segment_start", 0)))
+                    except (TypeError, ValueError):
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": "'target_seconds' and 'segment_start' must be numbers."})
+                        return
+                    if not 5 <= target <= 120:
+                        self._send_json(400, {"error_code": "invalid_request",
+                                              "message": "'target_seconds' must be between 5 and 120."})
+                        return
+                    job = Job(kind="plan", source_job_id=source_id, style=style,
+                              target_seconds=target, segment_start=seg_start)
+                else:
+                    raw_keys = body.get("api_keys")
+                    if not isinstance(raw_keys, dict):
+                        raw_keys = {}
+                    api_keys = {name: str(raw_keys[name]).strip()
+                                for name in ("pexels", "pixabay", "unsplash")
+                                if raw_keys.get(name)
+                                and str(raw_keys[name]).strip()}
+                    job = Job(kind="media", source_job_id=source_id,
+                              api_keys=api_keys)
+            elif kind in ("lyrics", "align", "subtitle_preview"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",
