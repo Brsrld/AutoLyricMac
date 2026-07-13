@@ -725,16 +725,33 @@ class Job:
                         if not ln.get("translation")
                         and ln["display_text"].strip()]
                 if todo:
-                    log(f"translating {len(todo)} line(s) via Claude…")
-                    results = claude_translate_lines(
-                        [ln["display_text"] for ln in todo], api_key,
-                        source_lang)
-                    for ln, tr_text in zip(todo, results):
-                        if tr_text:
+                    import llm_cache
+                    # serve repeats from the local cache; pay only for new text
+                    uncached = []
+                    for ln in todo:
+                        hit = llm_cache.get_json(
+                            llm_cache.key_for("tr", ln["display_text"]))
+                        if hit:
                             store.update_line(self.source_job_id,
                                               ln["line_index"],
-                                              translation=tr_text)
+                                              translation=hit)
                             translated += 1
+                        else:
+                            uncached.append(ln)
+                    if uncached:
+                        log(f"translating {len(uncached)} new line(s) via Claude…")
+                        results = claude_translate_lines(
+                            [ln["display_text"] for ln in uncached], api_key,
+                            source_lang)
+                        for ln, tr_text in zip(uncached, results):
+                            if tr_text:
+                                llm_cache.put_json(
+                                    llm_cache.key_for("tr", ln["display_text"]),
+                                    tr_text)
+                                store.update_line(self.source_job_id,
+                                                  ln["line_index"],
+                                                  translation=tr_text)
+                                translated += 1
             elif ensure_argos_pair(source_lang, "tr", log=log):
                 translated, _ = fill_missing_translations(
                     store, self.source_job_id, source_lang, log=log)
@@ -933,12 +950,19 @@ class Job:
             api_key = Keychain().get("anthropic_api_key")
             if api_key:
                 from plan.semantic import claude_semantics, extract_semantics
+                import llm_cache
                 texts = sorted({ln["display_text"] for ln in payload["lines"]
                                 if ln["display_text"].strip()})
-                lut = claude_semantics(texts, title_hint, api_key)
+                ck = llm_cache.key_for("sem", title_hint, *texts)
+                lut = llm_cache.get_json(ck)
+                cached = lut is not None
+                if lut is None:
+                    lut = claude_semantics(texts, title_hint, api_key)
+                    llm_cache.put_json(ck, lut)
                 semantics_fn = lambda t: lut.get(t) or extract_semantics(t)
                 print(f"[engine] job {self.id} plan: Claude semantics for "
-                      f"{len(lut)} line(s)", flush=True)
+                      f"{len(lut)} line(s)"
+                      f"{' (cache, ücretsiz)' if cached else ''}", flush=True)
         except Exception as exc:
             print(f"[engine] job {self.id} plan: LLM semantics unavailable "
                   f"({exc}); using lexicon", flush=True)

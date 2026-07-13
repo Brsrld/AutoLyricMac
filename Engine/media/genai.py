@@ -30,8 +30,25 @@ def build_prompt(scene):
 
 
 def generate_image(scene, api_key, opener=urllib.request.urlopen):
-    """Generate one vertical image; returns (MediaCandidate, image_bytes)."""
+    """Generate one vertical image; returns (MediaCandidate, image_bytes).
+
+    Results are cached by prompt in Cache/genai/ — the same prompt is never
+    paid for twice (regenerates, replans and other songs reuse it free).
+    """
     prompt = build_prompt(scene)
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
+    import llm_cache
+    cache_path = llm_cache.cached_image_path(prompt)
+    if cache_path.exists():
+        cand = MediaCandidate(
+            provider="fal_ai", provider_ref=f"gen-{scene.get('scene_index', 0)}",
+            kind="photo", width=1088, height=1920, page_url="https://fal.ai",
+            download_url=f"cache://{cache_path.name}",
+            creator="AI generated (FLUX schnell, cached)",
+            license="AI-generated via fal.ai", query=prompt[:120])
+        return cand, cache_path.read_bytes()
     body = json.dumps({
         "prompt": prompt,
         "image_size": {"width": 1088, "height": 1920},
@@ -56,6 +73,8 @@ def generate_image(scene, api_key, opener=urllib.request.urlopen):
     except Exception as exc:
         raise MediaProviderError(f"Could not download the generated "
                                  f"image: {exc}") from exc
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(data)
     cand = MediaCandidate(
         provider="fal_ai", provider_ref=f"gen-{scene.get('scene_index', 0)}",
         kind="photo", width=1088, height=1920, page_url="https://fal.ai",

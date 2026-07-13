@@ -17,8 +17,20 @@ def separate_vocals(audio_path, log=None):
     if cached.exists():
         return cached
     out_dir = audio_path.parent / "demucs_tmp"
+    # demucs cannot decode m4a without ffmpeg on its PATH; feed it wav
+    src = audio_path
+    if audio_path.suffix.lower() != ".wav":
+        src = audio_path.parent / "demucs_in.wav"
+        for ff in ("/opt/homebrew/bin/ffmpeg", "ffmpeg"):
+            r = subprocess.run([ff, "-y", "-v", "error", "-i",
+                                str(audio_path), "-ac", "2", "-ar", "44100",
+                                str(src)], capture_output=True)
+            if r.returncode == 0:
+                break
+        else:
+            return None
     cmd = [sys.executable, "-m", "demucs", "--two-stems", "vocals",
-           "-n", "htdemucs", "-o", str(out_dir), str(audio_path)]
+           "-n", "htdemucs", "-o", str(out_dir), str(src)]
     if log:
         log("Separating vocals (Demucs)…")
     try:
@@ -34,6 +46,8 @@ def separate_vocals(audio_path, log=None):
         produced[0].replace(cached)
         import shutil
         shutil.rmtree(out_dir, ignore_errors=True)
+        if src != audio_path:
+            src.unlink(missing_ok=True)
         return cached
     except Exception as exc:
         if log:
