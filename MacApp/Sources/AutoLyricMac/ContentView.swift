@@ -48,6 +48,8 @@ struct ContentView: View {
     @State private var previewStyle: String = "archiveCollage"
     @State private var showManualLyrics = false
     @State private var manualLyricsDraft: String = ""
+    @State private var showManualTranslations = false
+    @State private var manualTranslationsDraft: String = ""
 
     // Scene plan & media (Phase 4)
     @State private var planTheme: String = ""
@@ -766,11 +768,17 @@ struct ContentView: View {
                 .disabled(engine.status != .connected || lyricsJobRunning)
                 Button("Align Words") { startAlign() }
                     .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
+                Button("Türkçe Çeviriler…") {
+                    manualTranslationsDraft = ""
+                    showManualTranslations = true
+                }
+                .disabled(engine.status != .connected || lyrics == nil)
                 if lyricsJobRunning {
                     Button("Cancel", role: .cancel) { cancelLyricsJob() }
                 }
             }
             .sheet(isPresented: $showManualLyrics) { manualLyricsSheet }
+            .sheet(isPresented: $showManualTranslations) { manualTranslationsSheet }
 
             if let job = lyricsJob {
                 if !job.isTerminal {
@@ -831,6 +839,60 @@ struct ContentView: View {
                 lyricsError = error.errorDescription
             } catch {
                 lyricsError = "Could not save the lyrics: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private var manualTranslationsSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Türkçe Çevirileri Yapıştır")
+                .font(.headline)
+            Text("Her satır, sözlerin aynı sıradaki satırına eşlenir. Boş bırakılan satırın çevirisi olmaz. Soldaki orijinal sözler sıra referansıdır.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 10) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(lyrics?.lines ?? []) { line in
+                            Text("\(line.lineIndex + 1). \(line.displayText)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .frame(width: 300, height: 300)
+                TextEditor(text: $manualTranslationsDraft)
+                    .font(.callout.monospaced())
+                    .frame(minWidth: 320, minHeight: 300)
+                    .overlay(RoundedRectangle(cornerRadius: 6)
+                        .stroke(.quaternary))
+            }
+            HStack {
+                Spacer()
+                Button("Vazgeç") { showManualTranslations = false }
+                Button("Kaydet") { saveManualTranslations() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(manualTranslationsDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+    }
+
+    private func saveManualTranslations() {
+        guard let source = activeJob, source.state == "done" else { return }
+        let text = manualTranslationsDraft
+        showManualTranslations = false
+        Task {
+            do {
+                let applied = try await engine.setManualTranslations(
+                    sourceJobId: source.jobId, text: text)
+                await refreshLyrics()
+                AppLog.shared.append("\(applied) satıra Türkçe çeviri eklendi.")
+            } catch let error as EngineAPIError {
+                lyricsError = error.errorDescription
+            } catch {
+                lyricsError = "Çeviriler kaydedilemedi: \(error.localizedDescription)"
             }
         }
     }

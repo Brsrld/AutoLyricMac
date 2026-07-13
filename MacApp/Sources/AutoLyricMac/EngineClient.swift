@@ -394,6 +394,15 @@ final class EngineClient: ObservableObject {
                        timeout: 15)
     }
 
+    /// Paste-in-order Turkish translations: i-th line -> i-th lyric line.
+    func setManualTranslations(sourceJobId: String, text: String) async throws -> Int {
+        struct Response: Decodable { let applied: Int; let lineCount: Int }
+        let response: Response = try await post(
+            path: "lyrics/\(sourceJobId)/translations",
+            body: ["text": text], timeout: 15)
+        return response.applied
+    }
+
     /// Persist a user correction and/or Turkish translation for one line.
     /// Pass an empty string to clear; nil leaves the field unchanged.
     func updateLyricLine(sourceJobId: String, lineIndex: Int,

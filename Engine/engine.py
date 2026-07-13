@@ -1784,6 +1784,33 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, payload)
             return
 
+        m = re.match(r"^/lyrics/([0-9a-f]{32})/translations$", self.path)
+        if m:
+            body = self._read_json_body() or {}
+            text = str(body.get("text") or "")
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from lyrics.store import LyricsStore
+            store = LyricsStore(LYRICS_DB_PATH)
+            payload = store.get_lyrics(m.group(1))
+            if payload is None:
+                self._send_json(404, {"error_code": "not_found",
+                                      "message": "No lyrics stored for this job."})
+                return
+            # paste-in-order: i-th pasted line -> i-th lyric line;
+            # blank line clears/skips that lyric's translation
+            lines = [ln.strip() for ln in text.splitlines()]
+            applied = 0
+            for i, ln in enumerate(payload["lines"]):
+                if i >= len(lines):
+                    break
+                store.update_line(m.group(1), ln["line_index"],
+                                  translation=lines[i])
+                if lines[i]:
+                    applied += 1
+            self._send_json(200, {"applied": applied,
+                                  "line_count": len(payload["lines"])})
+            return
+
         m = re.match(r"^/lyrics/([0-9a-f]{32})/line$", self.path)
         if m:
             body = self._read_json_body()
