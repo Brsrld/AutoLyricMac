@@ -1018,6 +1018,38 @@ class Job:
                     log=lambda m: print(f"[engine] job {self.id} media: {m}",
                                         flush=True))
             except MediaProviderError as exc:
+                # spec: AI generation is fallback-only, when stock fails
+                fal_key = None
+                try:
+                    from publish.youtube import Keychain
+                    fal_key = Keychain().get("fal_api_key")
+                except Exception:
+                    pass
+                if fal_key:
+                    try:
+                        from media.genai import generate_image
+                        scene["scene_index"] = scene.get("scene_index", i)
+                        cand, data = generate_image(scene, fal_key)
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        gen_path = dest_dir / f"gen_{i}.jpg"
+                        gen_path.write_bytes(data)
+                        store.record_asset(self.source_job_id, i, cand,
+                                           gen_path)
+                        from media.crop import adaptation_plan as _ap
+                        scene["media"] = {**cand.summary(),
+                                          "file_path": str(gen_path),
+                                          "adaptation": _ap(cand.width,
+                                                            cand.height,
+                                                            plan["style"])}
+                        fetched += 1
+                        print(f"[engine] job {self.id} media: scene {i} "
+                              f"AI-generated (stock had no match)", flush=True)
+                        continue
+                    except MediaProviderError as gen_exc:
+                        scene_errors.append(f"scene {i}: {exc}; AI fallback: "
+                                            f"{gen_exc}")
+                        scene["media"] = None
+                        continue
                 scene_errors.append(f"scene {i}: {exc}")
                 scene["media"] = None
                 continue
