@@ -5,9 +5,17 @@ Whisper's word timestamps. The separated track is cached per job as
 `vocals.wav`; any failure falls back to the full mix upstream.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _clean_env():
+    """Strip Metal debug/validation vars a debug-built app leaks to
+    children — torch MPS aborts (SIGABRT) under the validation layer."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(("MTL_", "METAL_"))}
 
 
 def separate_vocals(audio_path, log=None):
@@ -34,8 +42,14 @@ def separate_vocals(audio_path, log=None):
     if log:
         log("Separating vocals (Demucs)…")
     try:
+        env = _clean_env()
         result = subprocess.run(cmd, capture_output=True, text=True,
-                                timeout=1800)
+                                timeout=1800, env=env)
+        if result.returncode != 0:
+            if log:
+                log("Demucs on GPU failed; retrying on CPU…")
+            result = subprocess.run(cmd + ["-d", "cpu"], capture_output=True,
+                                    text=True, timeout=3600, env=env)
         if result.returncode != 0:
             if log:
                 log(f"Demucs failed: {(result.stderr or '')[-200:]}")
