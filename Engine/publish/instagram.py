@@ -140,7 +140,7 @@ class TempObjectStore:
 
 def _graph(method, path, params, opener):
     query = urllib.parse.urlencode(params)
-    url = f"{_base_for(params.get(chr(97)+chr(99)+chr(99)+chr(101)+chr(115)+chr(115)+chr(95)+chr(116)+chr(111)+chr(107)+chr(101)+chr(110), ''))}{path}"
+    url = f"{_base_for(params.get('access_token', ''))}{path}"
     data = None
     if method == "POST":
         data = query.encode()
