@@ -63,6 +63,12 @@ struct ContentView: View {
     @State private var historyLoaded = false
     @State private var cleanupMessage: String?
 
+    // One-click Create Video pipeline
+    @State private var createTask: Task<Void, Never>?
+    @State private var createStage: String?
+    @State private var createError: String?
+    @State private var createJobId: String?
+
     // YouTube publishing (Phase 8)
     @State private var youtubeConnected = false
     @State private var youtubeClientId: String = ""
@@ -117,12 +123,7 @@ struct ContentView: View {
                 metadataSection
                 durationSection
 
-                Button("Create Video") {
-                    // Rendering arrives in a later step; the gate itself is the feature here.
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!canCreateVideo)
+                createVideoSection
 
                 Divider()
 
@@ -265,7 +266,7 @@ struct ContentView: View {
 
     private var downloadTestSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Audio Ingestion Test")
+            Text("Authorization & Manual Steps")
                 .font(.headline)
 
             Toggle(isOn: $authorizationConfirmed) {
@@ -407,6 +408,180 @@ struct ContentView: View {
                     .foregroundStyle(.red)
             }
         }
+    }
+
+    // MARK: - One-click Create Video
+
+    private var createRunning: Bool { createTask != nil }
+
+    private var createVideoSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Style", selection: $planStyle) {
+                    Text("Automatic").tag("automatic")
+                    Text("Archive Collage").tag("archiveCollage")
+                    Text("Doodle Memory").tag("doodleMemory")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 380)
+                Button(createRunning ? "Creating…" : "Create Video") {
+                    startCreateVideo()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!canCreateVideo || !authorizationConfirmed
+                          || !anyProviderKey || createRunning)
+                if createRunning {
+                    Button("Cancel", role: .cancel) { cancelCreateVideo() }
+                }
+            }
+            if !authorizationConfirmed {
+                Text("Confirm the authorization checkbox below first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if !anyProviderKey {
+                Text("Add a stock media API key (Stock Media API Keys section) first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let stage = createStage {
+                Label(stage, systemImage: createRunning
+                      ? "gearshape.2" : "checkmark.circle.fill")
+                    .font(.callout)
+            }
+            if let error = createError {
+                Label(error, systemImage: "xmark.octagon")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// Poll one engine job to its terminal state, mirroring it into `update`.
+    private func awaitJob(_ jobId: String,
+                          update: @escaping (JobStatus) -> Void) async throws -> JobStatus {
+        createJobId = jobId
+        while true {
+            try Task.checkCancellation()
+            let status = try await engine.jobStatus(id: jobId)
+            update(status)
+            if status.isTerminal { return status }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+    }
+
+    private func startCreateVideo() {
+        let url = youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        createError = nil
+        createStage = nil
+        activeJob = nil
+        analysisJob = nil
+        lyricsJob = nil
+        planJob = nil
+        lyrics = nil
+        plan = nil
+        editingLine = nil
+        stopPreview()
+        let keys = providerKeys
+        let style = planStyle
+        let seconds = durationSeconds
+
+        createTask = Task {
+            defer { createTask = nil; createJobId = nil }
+            @MainActor func stage(_ text: String) {
+                createStage = text
+                AppLog.shared.append("Create Video: \(text)")
+            }
+            do {
+                stage("1/7 Downloading audio…")
+                var status = try await awaitJob(
+                    engine.createJob(url: url, authorized: authorizationConfirmed)
+                ) { activeJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+                let sourceId = status.jobId
+
+                stage("2/7 Analyzing and selecting the best \(seconds)s…")
+                status = try await awaitJob(
+                    engine.createAnalyzeJob(sourceJobId: sourceId,
+                                            targetSeconds: seconds,
+                                            startOverride: nil)
+                ) { analysisJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+                let segmentStart = status.result?.segmentStart ?? 0
+
+                stage("3/7 Searching lyrics…")
+                status = try await awaitJob(
+                    engine.createLyricsJob(sourceJobId: sourceId,
+                                           artist: lyricArtist,
+                                           title: lyricTitle)
+                ) { lyricsJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+                lyrics = try? await engine.fetchLyrics(sourceJobId: sourceId)
+
+                stage("4/7 Aligning words (local Whisper)…")
+                status = try await awaitJob(
+                    engine.createAlignJob(sourceJobId: sourceId)
+                ) { lyricsJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+                lyrics = try? await engine.fetchLyrics(sourceJobId: sourceId)
+
+                stage("5/7 Planning scenes…")
+                status = try await awaitJob(
+                    engine.createPlanJob(sourceJobId: sourceId, style: style,
+                                         segmentStart: segmentStart,
+                                         targetSeconds: seconds)
+                ) { planJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+                let resolvedStyle = status.result?.style ?? "archiveCollage"
+
+                stage("6/7 Fetching licensed media…")
+                status = try await awaitJob(
+                    engine.createMediaJob(sourceJobId: sourceId, apiKeys: keys)
+                ) { planJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+                plan = try? await engine.fetchPlan(sourceJobId: sourceId)
+
+                stage("7/7 Rendering \(resolvedStyle)…")
+                status = try await awaitJob(
+                    engine.createRenderJob(sourceJobId: sourceId,
+                                           style: resolvedStyle)
+                ) { planJob = $0 }
+                guard status.state == "done" else { throw PipelineStop(status) }
+
+                createStage = "Done — video ready. Scroll down to open it."
+                refreshHistory()
+                if let path = status.result?.outputPath {
+                    NSWorkspace.shared.activateFileViewerSelecting(
+                        [URL(fileURLWithPath: path)])
+                }
+            } catch let stop as PipelineStop {
+                createStage = nil
+                createError = stop.status.message
+                AppLog.shared.append("Create Video stopped: \(stop.status.message)")
+            } catch is CancellationError {
+                createStage = nil
+                createError = "Cancelled."
+            } catch let error as EngineAPIError {
+                createStage = nil
+                createError = error.errorDescription
+            } catch {
+                createStage = nil
+                createError = "Lost contact with the local engine: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private struct PipelineStop: Error {
+        let status: JobStatus
+        init(_ status: JobStatus) { self.status = status }
+    }
+
+    private func cancelCreateVideo() {
+        if let jobId = createJobId {
+            Task { try? await engine.cancelJob(id: jobId) }
+        }
+        createTask?.cancel()
     }
 
     // MARK: - History (Phase 7)
