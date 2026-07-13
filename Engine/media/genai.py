@@ -13,6 +13,20 @@ from .providers import MediaCandidate, MediaProviderError
 
 FAL_ENDPOINT = "https://fal.run/fal-ai/flux/schnell"
 
+# lyric mood -> color direction (keeps white paper from dominating)
+MOOD_PALETTES = {
+    "love": "warm rose, coral and soft crimson palette, dusk glow",
+    "longing": "amber sunset and violet dusk palette, deep warm shadows",
+    "joy": "vivid sunny yellow, fresh green and sky blue palette",
+    "melancholy": "deep indigo twilight, rainy blue-grey palette",
+    "calm": "soft sage, teal and misty morning palette",
+    "energy": "bold red, orange and electric blue palette",
+    "nostalgia": "sepia, faded gold and olive palette, old photo warmth",
+    "loneliness": "cold navy night, sparse lamplight palette",
+    "hope": "dawn pastel pink, peach and light gold palette",
+    "neutral": "muted warm earth-tone palette",
+}
+
 
 def build_prompt(scene, style="photo"):
     """Prompt from the scene's queries/lyric/emotion; two art directions."""
@@ -25,12 +39,16 @@ def build_prompt(scene, style="photo"):
     if emotion and emotion != "neutral":
         parts.append(f"{emotion} mood")
     if style == "doodle":
-        parts.append("cute hand-drawn marker doodle illustration on warm "
-                     "cream paper, thick dark navy ink outlines, simple "
-                     "childlike rounded shapes, flat muted warm colors, "
-                     "wobbly hand-drawn lines, vertical composition, "
-                     "no photorealism, absolutely no text, no letters, no words, "
-                     "no typography, no signature, no watermark")
+        palette = MOOD_PALETTES.get(emotion, MOOD_PALETTES["neutral"])
+        parts.append(f"detailed hand-drawn ink and gouache illustration, "
+                     f"thick dark navy outlines, {palette}, fully painted "
+                     f"colored background filling the whole frame with "
+                     f"scenery and atmosphere (sky, buildings, nature, "
+                     f"interior details), textured shading, wobbly "
+                     f"hand-drawn lines, storybook art, vertical "
+                     f"composition, no plain white background, "
+                     f"no photorealism, absolutely no text, no letters, "
+                     f"no words, no typography, no signature, no watermark")
     else:
         parts.append("cinematic photography, vertical composition, natural "
                      "light, no text, no watermark")
