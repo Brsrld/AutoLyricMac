@@ -95,30 +95,33 @@ def _adapted_full_frame(img, strategy, ow, oh):
     return cover_resize(img, ow, oh)          # portrait/square cover crop
 
 
-def _boil_variants(img, n=3, amp=7, seed=5):
-    """Hand-drawn 'line boil': n subtly warped copies of the drawn scene,
-    cycled at ~6 fps so the illustration wiggles like live drawing."""
-    import random as _r
-    rng = _r.Random(seed)
-    w, h = img.size
-    gx, gy = 4, 6
+def _boil_variants(img, n=3, amp=4.5, seed=5):
+    """Hand-drawn 'line boil': smooth low-frequency warps of the drawn
+    scene cycled at ~6 fps. A continuous sinusoidal displacement field
+    keeps lines curved and seamless (no grid patches, no edge gaps)."""
+    import numpy as _np
+    from scipy.ndimage import map_coordinates as _mc
+    arr = _np.asarray(img, dtype=_np.float32)
+    h, w = arr.shape[:2]
+    yy, xx = _np.mgrid[0:h, 0:w].astype(_np.float32)
+    rng = _np.random.default_rng(seed)
     variants = [img]
-    for _ in range(n - 1):
-        mesh = []
-        cw, ch = w / gx, h / gy
-        for j in range(gy):
-            for i2 in range(gx):
-                box = (int(i2 * cw), int(j * ch),
-                       int((i2 + 1) * cw), int((j + 1) * ch))
-                q = []
-                for cx, cy in ((box[0], box[1]), (box[0], box[3]),
-                               (box[2], box[3]), (box[2], box[1])):
-                    jx = 0 if cx in (0, w) else rng.uniform(-amp, amp)
-                    jy = 0 if cy in (0, h) else rng.uniform(-amp, amp)
-                    q += [cx + jx, cy + jy]
-                mesh.append((box, tuple(q)))
-        variants.append(img.transform((w, h), Image.MESH, mesh,
-                                      Image.BILINEAR))
+    for k in range(n - 1):
+        dx = _np.zeros((h, w), _np.float32)
+        dy = _np.zeros((h, w), _np.float32)
+        for _ in range(3):
+            fx, fy = rng.uniform(1.5, 3.5), rng.uniform(2.0, 4.5)
+            px, py = rng.uniform(0, 6.28), rng.uniform(0, 6.28)
+            a = amp * rng.uniform(0.5, 1.0) / 3
+            dx += a * _np.sin(2 * _np.pi * fy * yy / h + px)                     * _np.cos(2 * _np.pi * fx * xx / w + py)
+            dy += a * _np.cos(2 * _np.pi * fx * xx / w + py + 1.3)                     * _np.sin(2 * _np.pi * fy * yy / h + px + 0.7)
+        coords = _np.stack([yy + dy, xx + dx])
+        out = _np.empty_like(arr)
+        for c in range(arr.shape[2]):
+            out[..., c] = _mc(arr[..., c], coords, order=1,
+                              mode="nearest", prefilter=False)
+        variants.append(Image.fromarray(
+            _np.clip(out, 0, 255).astype(_np.uint8)))
     return variants
 
 
