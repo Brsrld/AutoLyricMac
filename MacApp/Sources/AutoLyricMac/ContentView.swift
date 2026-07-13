@@ -430,9 +430,9 @@ struct ContentView: View {
                     Text("Polaroid Wall").tag("polaroidWall")
                     Text("Minimal Dark").tag("minimalDark")
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(maxWidth: 380)
+                .fixedSize()
                 Button(createRunning ? "Creating…" : "Create Video") {
                     startCreateVideo()
                 }
