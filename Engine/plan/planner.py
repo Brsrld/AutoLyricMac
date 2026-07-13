@@ -190,9 +190,17 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
 
         subjects = sem["subjects"]
         queries = list(sem["queries"]) if sem["matched"] else []
-        # the user's theme leads even on matched lines (slot 2, cap 5)
-        if extra_queries and queries:
-            queries.insert(1, extra_queries[0])
+        # rotate the user's theme queries across scenes for variety;
+        # they lead on matched lines too (slot 2)
+        if extra_queries:
+            rotated = [extra_queries[(i + k) % len(extra_queries)]
+                       for k in range(len(extra_queries))]
+            if queries:
+                queries.insert(1, rotated[0])
+                for q in rotated[1:2]:
+                    queries.append(q)
+            else:
+                queries = rotated[:3]
         # no lexicon match (or instrumental): search the song's own context
         # (title + dominant mood) instead of meaningless abstract textures
         for q in song_queries:

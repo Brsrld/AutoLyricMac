@@ -874,18 +874,38 @@ class Job:
             from plan.semantic import extract_semantics as _sem
             from lyrics.translate import (ensure_argos_pair, looks_turkish,
                                           _argos_translate)
-            theme_en = theme
+            # decompose the theme into many short, concrete queries: split
+            # into fragments, translate each, keep 2-6 word noun phrases
+            is_tr = looks_turkish([theme])
+            can_translate = False
             try:
-                if looks_turkish([theme]) and ensure_argos_pair("tr", "en"):
-                    theme_en = _argos_translate(theme, "tr", "en")
+                can_translate = is_tr and ensure_argos_pair("tr", "en")
             except Exception:
                 pass
-            clean = theme_en.replace(",", " ").strip()
-            if clean:
-                theme_queries.append(f"{clean.lower()} cinematic mood"[:80])
-            for q in _sem(f"{theme} {theme_en}")["queries"][:2]:
+            fragments = [f.strip() for f in
+                         re.split(r"[.,;:\n]", theme) if f.strip()][:14]
+            for frag in fragments:
+                frag_en = frag
+                if can_translate:
+                    try:
+                        frag_en = _argos_translate(frag, "tr", "en")
+                    except Exception:
+                        continue
+                words = [w for w in re.findall(r"[a-zA-Z']+", frag_en.lower())
+                         if w not in ("the", "a", "an", "of", "and", "or",
+                                      "in", "on", "to", "is", "are", "that",
+                                      "with", "for", "it", "who", "has",
+                                      "have", "been", "his", "her", "its")]
+                if not 1 <= len(words) <= 7:
+                    words = words[:6]
+                if len(words) >= 2:
+                    q = " ".join(words[:6])
+                    if q not in theme_queries:
+                        theme_queries.append(q)
+            for q in _sem(theme)["queries"][:2]:
                 if q not in theme_queries and "abstract light" not in q:
                     theme_queries.append(q)
+            theme_queries = theme_queries[:10]
             print(f"[engine] job {self.id} plan: theme queries "
                   f"{theme_queries}", flush=True)
         semantics_fn = None
