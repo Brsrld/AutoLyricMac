@@ -17,6 +17,7 @@ Services/credentials policy: `Docs/SERVICES_AND_KEYS.md`.
 | Phase 1 — MVP gaps | `b7485a4` | AVAudioPlayer preview + in-app activity log; all Phase 1 acceptance criteria verified |
 | Phase 2 — analysis | `ab14b13` | librosa analysis (tempo/beats/onsets/energy/sections/repetition), pure `select_segment` scorer with reasoning, `analyze` job kind, Segment Selection UI with manual override; verified end-to-end |
 | Phase 3 — lyrics & sync | `d107c3a`…`7f5146c` | Lyrics providers (LRCLIB + local .lrc/.txt) with ranking and SQLite cache, canonical store with persistent corrections/Turkish translations, mlx-whisper word alignment with per-line/word confidence (uncertain + suspect flags), both subtitle systems (Archive tape strips EN+TR, Doodle navy word stickers) with safe-zone wrapping/dynamic placement, `lyrics`/`align`/`subtitle_preview` job kinds + `/lyrics` endpoints, Lyrics & Sync UI; 92 tests total; E2E verified |
+| Phase 4 — planning & media | `3ada36e`…`56941e0` | EN+TR lexicon semantics (LLM-optional interface), deterministic phrase-driven scene planner (energy bands, beat micro-motion, style rules, automatic preset recommendation with reasoning), Pexels/Pixabay/Unsplash adapters with fallback chain, ranking + hard rejects (no enlargement/stretch, no <1080p or too-short video, watermark tags), dHash dedup, attribution store, subject-aware crop + adaptation strategies, `plan`/`media` jobs + `/plan` endpoint, Scene Plan & Media UI with Keychain-held keys; 138 tests total |
 
 ## Environment
 
@@ -49,11 +50,29 @@ Services/credentials policy: `Docs/SERVICES_AND_KEYS.md`.
   and flow into renders (verified in `Output/subtitle_previews/deadbeef_*`).
 - Translations fit: TR strips wrap independently on their own cutouts.
 
-## Next: Phase 4 — Semantic planning and media relevance
+## Phase 4 acceptance evidence
 
-Per `Docs/PHASES_AND_ACCEPTANCE.md`: meaning/emotion extraction with a
-deterministic/local fallback (LLM optional), structured scene plans,
-several search queries per scene, stock-provider adapters (Pexels primary —
-request the API key only when ready to test), ranking/fallback,
-resolution/orientation checks, perceptual dedup, subject-aware crop/fill,
-and attribution history.
+- Visuals relate to lyrics: lexicon semantics feed per-scene queries
+  ("Rain on the window" → "rain on window glass"); verified on real
+  aligned lyrics via the HTTP `plan` job.
+- No repeats/watermarks/enlargement/stretching: ranking hard-rejects
+  (unit-tested), dHash dedup skips perceptual duplicates and reused refs,
+  photos must exceed 1080x1920 after size verification of the actual file.
+- Landscape adaptation: subject-aware attention crop, blur-fill, or
+  Archive layered-frame decisions (unit-tested); never stretch.
+- Provider fallback: failing provider is skipped with recorded error
+  (unit-tested); missing keys produce a clean human-readable job error.
+- E2E: plan job over HTTP on real data; media job happy path with a
+  stubbed provider fetched 4/4 scenes with attribution + adaptation.
+
+**Pending (needs the user):** live provider smoke test. Get a free Pexels
+API key (pexels.com/api, free tier ~200 req/h; revocable in the Pexels
+dashboard; keys stay in Keychain), paste it in the app's "Stock Media API
+Keys" section, then run Fetch Licensed Media once and confirm results.
+
+## Next: Phase 5 — Finalize Archive Collage
+
+Per `Docs/PHASES_AND_ACCEPTANCE.md`: artboard composition, negative space,
+varied framed photos, translucent blocks, monochrome analog treatment, slow
+editorial movement, irregular paper subtitles — rendered from the Phase 4
+scene plan + fetched media, then user approval.
