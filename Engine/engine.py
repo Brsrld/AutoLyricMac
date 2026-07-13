@@ -819,8 +819,13 @@ class Job:
         self._check_cancel()
 
         self.set(progress=0.8, message="Planning scenes from lyric meaning…")
+        from projects import ProjectStore as _PS
+        project = _PS(PROJECTS_DB_PATH).get_project(self.source_job_id) or {}
+        title_hint = " ".join(filter(None, [
+            project.get("title") or payload.get("title"),
+            payload.get("artist")]))
         plan = build_scene_plan(payload["lines"], analysis, self.style,
-                                seg_start, seg_end)
+                                seg_start, seg_end, title_hint=title_hint)
         plan["source_job_id"] = self.source_job_id
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
@@ -1534,6 +1539,30 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     pass
             self._send_json(200, {"deleted": True})
+            return
+
+        m = re.match(r"^/lyrics/([0-9a-f]{32})/manual$", self.path)
+        if m:
+            body = self._read_json_body() or {}
+            text = str(body.get("text") or "").strip()
+            if len(text) < 10:
+                self._send_json(400, {"error_code": "invalid_request",
+                                      "message": "Paste at least a few lyric lines."})
+                return
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from lyrics.models import LyricsCandidate
+            from lyrics.store import LyricsStore
+            store = LyricsStore(LYRICS_DB_PATH)
+            is_lrc = bool(re.search(r"\[\d{1,3}:\d{2}", text))
+            candidate = LyricsCandidate(
+                provider="manual",
+                artist=str(body.get("artist") or "")[:200],
+                title=str(body.get("title") or "")[:200],
+                plain_text="" if is_lrc else text[:20000],
+                lrc_text=text[:20000] if is_lrc else "")
+            store.save_lyrics(m.group(1), candidate, score=1.0)
+            payload = store.get_lyrics(m.group(1))
+            self._send_json(200, payload)
             return
 
         m = re.match(r"^/lyrics/([0-9a-f]{32})/line$", self.path)

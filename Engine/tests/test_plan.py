@@ -155,6 +155,34 @@ class TestScenePlan(unittest.TestCase):
         self.assertGreaterEqual(plan["scene_count"], 1)
         self.assertEqual(plan["lyric_scene_count"], 0)
 
+    def test_ambient_and_unmatched_scenes_use_song_context(self):
+        plan = build_scene_plan(make_lines(), make_analysis(),
+                                "archiveCollage", 0, 45,
+                                title_hint="Rainy Night Memories")
+        ambient = [s for s in plan["scenes"] if s["lyric"] is None]
+        self.assertTrue(ambient)
+        for s in ambient:
+            self.assertTrue(s["queries"], "ambient scenes must have queries")
+            joined = " ".join(s["queries"])
+            self.assertNotIn("abstract light texture", joined,
+                             "song context must replace generic textures")
+        # title semantics (rain/night/memory) should surface somewhere
+        all_q = " ".join(q for s in ambient for q in s["queries"])
+        self.assertTrue(any(k in all_q for k in ("rain", "night", "photo",
+                                                 "memor", "vintage")))
+
+    def test_unmatched_lyric_line_gets_song_queries(self):
+        lines = [{"display_text": "qwzx bnmp vvv", "translation": None,
+                  "start": 2.0, "end": 6.0, "confidence": 0.9,
+                  "uncertain": False}]
+        plan = build_scene_plan(lines, make_analysis(), "archiveCollage",
+                                0, 30, title_hint="Lonely Winter Road")
+        scene = next(s for s in plan["scenes"] if s["lyric"])
+        joined = " ".join(scene["queries"])
+        self.assertTrue(any(k in joined for k in ("lone", "winter", "road",
+                                                  "solitary", "empty")),
+                        joined)
+
     def test_untimed_lines_are_ignored(self):
         lines = make_lines() + [{"display_text": "ghost", "translation": None,
                                  "start": None, "end": None,

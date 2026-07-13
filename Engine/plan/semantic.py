@@ -161,6 +161,20 @@ _LEX = {
 _GENERIC_QUERIES = ["soft abstract light texture", "warm bokeh background",
                     "gentle clouds sky minimal"]
 
+# dominant emotion -> mood-carrying stock queries (song-level fallback)
+EMOTION_QUERIES = {
+    "love": ["romantic couple golden hour", "soft intimate moment film"],
+    "longing": ["person gazing at horizon", "empty road wistful mood"],
+    "joy": ["friends laughing sunlight", "joyful dancing warm light"],
+    "melancholy": ["moody rainy window portrait", "lonely walk foggy street"],
+    "calm": ["peaceful nature morning mist", "quiet lake reflection dawn"],
+    "energy": ["city lights motion night", "concert crowd energy lights"],
+    "nostalgia": ["vintage film photo memories", "old family album retro"],
+    "loneliness": ["solitary figure empty field", "single window lit at night"],
+    "hope": ["sunrise over hills warm", "light rays through clouds"],
+    "neutral": ["cinematic atmospheric landscape", "warm analog film mood"],
+}
+
 
 def _norm(text):
     t = unicodedata.normalize("NFC", (text or "").lower())

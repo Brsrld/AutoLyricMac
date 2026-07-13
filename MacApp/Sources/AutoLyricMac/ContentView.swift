@@ -46,6 +46,8 @@ struct ContentView: View {
     @State private var correctionDraft: String = ""
     @State private var translationDraft: String = ""
     @State private var previewStyle: String = "archiveCollage"
+    @State private var showManualLyrics = false
+    @State private var manualLyricsDraft: String = ""
 
     // Scene plan & media (Phase 4)
     @State private var planStyle: String = "automatic"
@@ -755,12 +757,18 @@ struct ContentView: View {
                 Button("Fetch Lyrics") { startLyricsFetch() }
                     .disabled(engine.status != .connected || lyricsJobRunning
                               || lyricTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Enter Lyrics Manually…") {
+                    manualLyricsDraft = ""
+                    showManualLyrics = true
+                }
+                .disabled(engine.status != .connected || lyricsJobRunning)
                 Button("Align Words") { startAlign() }
                     .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
                 if lyricsJobRunning {
                     Button("Cancel", role: .cancel) { cancelLyricsJob() }
                 }
             }
+            .sheet(isPresented: $showManualLyrics) { manualLyricsSheet }
 
             if let job = lyricsJob {
                 if !job.isTerminal {
@@ -778,6 +786,49 @@ struct ContentView: View {
 
             if let lyrics {
                 lyricsDetail(lyrics)
+            }
+        }
+    }
+
+    private var manualLyricsSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Enter Lyrics Manually")
+                .font(.headline)
+            Text("Paste the lyrics, one line per row (or .lrc content with timestamps). Word timing comes from Align Words afterwards; Turkish translations are added automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $manualLyricsDraft)
+                .font(.callout.monospaced())
+                .frame(minWidth: 460, minHeight: 280)
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(.quaternary))
+            HStack {
+                Spacer()
+                Button("Cancel") { showManualLyrics = false }
+                Button("Save & Align") { saveManualLyrics() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(manualLyricsDraft.trimmingCharacters(in: .whitespacesAndNewlines).count < 10)
+            }
+        }
+        .padding(20)
+    }
+
+    private func saveManualLyrics() {
+        guard let source = activeJob, source.state == "done" else { return }
+        let text = manualLyricsDraft
+        showManualLyrics = false
+        Task {
+            do {
+                lyrics = try await engine.setManualLyrics(
+                    sourceJobId: source.jobId, text: text,
+                    artist: lyricArtist, title: lyricTitle)
+                lyricsError = nil
+                AppLog.shared.append("Manual lyrics saved (\(lyrics?.lines.count ?? 0) lines); aligning…")
+                startAlign()
+            } catch let error as EngineAPIError {
+                lyricsError = error.errorDescription
+            } catch {
+                lyricsError = "Could not save the lyrics: \(error.localizedDescription)"
             }
         }
     }

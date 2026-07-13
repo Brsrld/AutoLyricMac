@@ -10,7 +10,28 @@ the same semantics interface).
 
 import random
 
-from .semantic import dominant_emotion, extract_semantics
+from .semantic import EMOTION_QUERIES, dominant_emotion, extract_semantics
+
+
+def song_context_queries(title_hint, emotion_totals, all_subjects):
+    """Song-level fallback queries: title semantics + dominant mood.
+
+    Used for instrumental scenes and lines the lexicon can't read, so no
+    scene ever falls back to meaningless abstract textures when the song
+    itself gives us something to search for.
+    """
+    queries = []
+    if title_hint:
+        queries.extend(extract_semantics(title_hint)["queries"][:3])
+    emotion = dominant_emotion(emotion_totals)
+    for q in EMOTION_QUERIES.get(emotion, EMOTION_QUERIES["neutral"]):
+        if q not in queries:
+            queries.append(q)
+    for subject in all_subjects[:2]:
+        q = f"{subject} cinematic mood"
+        if q not in queries:
+            queries.append(q)
+    return queries[:5]
 
 # style -> (min, max) scene seconds by energy band, per Docs/STYLE_GUIDE.md
 _DURATIONS = {
@@ -88,7 +109,7 @@ def recommend_style(emotion_totals, tempo_bpm):
 
 
 def build_scene_plan(lines, analysis, style, segment_start, segment_end,
-                     semantics_fn=extract_semantics):
+                     semantics_fn=extract_semantics, title_hint=""):
     """Build the structured scene plan for a segment.
 
     `lines`: lyric dicts with absolute start/end (only timed lines are used):
@@ -134,6 +155,14 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
         emotion_totals, analysis.get("tempo_bpm", 100.0))
     style_key = style if style in _DURATIONS else rec_style
 
+    all_subjects = []
+    for ln in timed:
+        for s in semantics_fn(ln["display_text"])["subjects"]:
+            if s not in all_subjects:
+                all_subjects.append(s)
+    song_queries = song_context_queries(title_hint, emotion_totals,
+                                        all_subjects)
+
     # --- build scenes -------------------------------------------------------
     scenes = []
     rng = random.Random(int(segment_start * 10) + len(spans))
@@ -156,9 +185,18 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
         if style_key == "archiveCollage" and i % 3 == 2:
             overlays.append("dust_flicker")
 
-        subjects = sem["subjects"] or (["texture"] if not text else [])
+        subjects = sem["subjects"]
+        queries = list(sem["queries"]) if sem["matched"] else []
+        # no lexicon match (or instrumental): search the song's own context
+        # (title + dominant mood) instead of meaningless abstract textures
+        for q in song_queries:
+            if len(queries) >= 5:
+                break
+            if q not in queries:
+                queries.append(q)
         meaning = (f"{emotion} moment about {', '.join(subjects[:3])}"
-                   if subjects else f"{emotion} instrumental passage")
+                   if subjects else
+                   f"{dominant_emotion(emotion_totals)} passage — song-level imagery")
 
         scenes.append({
             "scene_index": i,
@@ -175,7 +213,7 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
             "energy": round(energy, 3),
             "energy_band": band,
             "subjects": subjects,
-            "queries": sem["queries"],
+            "queries": queries,
             "media_preference": _media_preference(style_key, band),
             "motion": {
                 "type": motion,

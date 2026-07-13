@@ -386,6 +386,14 @@ final class EngineClient: ObservableObject {
         return try Self.decode(data: data, response: response)
     }
 
+    /// Store manually pasted lyrics for a job (when providers find none).
+    func setManualLyrics(sourceJobId: String, text: String, artist: String,
+                         title: String) async throws -> LyricsPayload {
+        try await post(path: "lyrics/\(sourceJobId)/manual",
+                       body: ["text": text, "artist": artist, "title": title],
+                       timeout: 15)
+    }
+
     /// Persist a user correction and/or Turkish translation for one line.
     /// Pass an empty string to clear; nil leaves the field unchanged.
     func updateLyricLine(sourceJobId: String, lineIndex: Int,
