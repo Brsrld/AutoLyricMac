@@ -73,6 +73,17 @@ struct ContentView: View {
     @State private var publishPrivacy: String = "private"
     @State private var publishedURL: String?
 
+    // Instagram publishing (Phase 9)
+    @State private var instagramConnected = false
+    @State private var igToken: String = ""
+    @State private var igUserId: String = ""
+    @State private var igS3Endpoint: String = ""
+    @State private var igS3Bucket: String = ""
+    @State private var igS3AccessKey: String = ""
+    @State private var igS3SecretKey: String = ""
+    @State private var igS3PublicBase: String = ""
+    @State private var igMessage: String?
+
     private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
@@ -1026,16 +1037,116 @@ struct ContentView: View {
                     .controlSize(.small)
                 }
             }
+
+            Divider()
+            instagramRow(outputPath: outputPath)
         }
         .padding(10)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
         .onAppear { refreshYouTubeStatus() }
     }
 
+    @ViewBuilder
+    private func instagramRow(outputPath: String) -> some View {
+        Text("Publish to Instagram (Reels)")
+            .font(.subheadline.weight(.semibold))
+        if !instagramConnected {
+            DisclosureGroup("Connect Instagram (official Meta Graph API)") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Needs an eligible professional account, a Meta app access token, and S3-compatible temporary storage (e.g. Cloudflare R2) because Instagram requires a public HTTPS video URL. The temp object is deleted right after publishing. Everything is stored in your Keychain.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("Long-lived access token", text: $igToken)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Instagram professional account id", text: $igUserId)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("S3 endpoint (https://…r2.cloudflarestorage.com)", text: $igS3Endpoint)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        TextField("Bucket", text: $igS3Bucket)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Public base URL", text: $igS3PublicBase)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    HStack {
+                        SecureField("Access key", text: $igS3AccessKey)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("Secret key", text: $igS3SecretKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Button("Connect Instagram") { connectInstagram() }
+                        .disabled(igToken.isEmpty || igUserId.isEmpty)
+                }
+                .padding(.top, 4)
+            }
+            .font(.callout)
+        } else {
+            HStack(spacing: 12) {
+                Label("Instagram connected", systemImage: "checkmark.seal.fill")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+                Button("Disconnect") {
+                    Task {
+                        try? await engine.instagramDisconnect()
+                        instagramConnected = false
+                    }
+                }
+                .controlSize(.small)
+                Button("Publish Reel") { startInstagramPublish(outputPath: outputPath) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(planJobRunning)
+            }
+        }
+        if let message = igMessage {
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func connectInstagram() {
+        let s3 = ["endpoint": igS3Endpoint, "bucket": igS3Bucket,
+                  "region": "auto", "access_key": igS3AccessKey,
+                  "secret_key": igS3SecretKey, "public_base": igS3PublicBase]
+            .mapValues { $0.trimmingCharacters(in: .whitespaces) }
+        Task {
+            do {
+                let username = try await engine.instagramConnect(
+                    accessToken: igToken.trimmingCharacters(in: .whitespaces),
+                    igUserId: igUserId.trimmingCharacters(in: .whitespaces),
+                    s3: s3)
+                instagramConnected = true
+                igToken = ""
+                igS3SecretKey = ""
+                igMessage = "Connected as @\(username)."
+                AppLog.shared.append("Instagram connected as @\(username).")
+            } catch let error as EngineAPIError {
+                igMessage = error.errorDescription
+            } catch {
+                igMessage = "Could not connect Instagram."
+            }
+        }
+    }
+
+    private func startInstagramPublish(outputPath: String) {
+        guard let source = activeJob, source.state == "done" else { return }
+        publishedURL = nil
+        let caption = [publishTitle, publishDescription]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        runPlanJob("Instagram publish") {
+            try await engine.createInstagramPublishJob(
+                sourceJobId: source.jobId, outputPath: outputPath,
+                caption: caption)
+        }
+    }
+
     private func refreshYouTubeStatus() {
         Task {
             if let status = try? await engine.youtubeStatus() {
                 youtubeConnected = status.connected
+            }
+            if let connected = try? await engine.instagramStatus() {
+                instagramConnected = connected
             }
             if publishTitle.isEmpty {
                 publishTitle = [lyricArtist, lyricTitle]

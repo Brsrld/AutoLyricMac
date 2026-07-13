@@ -526,6 +526,45 @@ final class EngineClient: ObservableObject {
         return created.jobId
     }
 
+    /// Connect Instagram: token + professional account id + temp storage.
+    func instagramConnect(accessToken: String, igUserId: String,
+                          s3: [String: String]) async throws -> String {
+        struct Response: Decodable { let connected: Bool; let username: String }
+        let response: Response = try await post(path: "instagram/connect",
+                                                body: ["access_token": accessToken,
+                                                       "ig_user_id": igUserId,
+                                                       "s3": s3],
+                                                timeout: 30)
+        return response.username
+    }
+
+    func instagramStatus() async throws -> Bool {
+        struct Response: Decodable { let connected: Bool }
+        var request = URLRequest(url: baseURL.appendingPathComponent("instagram/status"))
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let decoded: Response = try Self.decode(data: data, response: response)
+        return decoded.connected
+    }
+
+    func instagramDisconnect() async throws {
+        struct Response: Decodable { let connected: Bool }
+        let _: Response = try await post(path: "instagram/disconnect",
+                                         body: [:], timeout: 10)
+    }
+
+    func createInstagramPublishJob(sourceJobId: String, outputPath: String,
+                                   caption: String) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "publish_instagram",
+                                                     "source_job_id": sourceJobId,
+                                                     "output_path": outputPath,
+                                                     "caption": caption],
+                                              timeout: 15)
+        return created.jobId
+    }
+
     func jobStatus(id: String) async throws -> JobStatus {
         var request = URLRequest(url: baseURL.appendingPathComponent("jobs/\(id)"))
         request.timeoutInterval = 5

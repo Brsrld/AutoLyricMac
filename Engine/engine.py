@@ -319,6 +319,8 @@ class Job:
                 self._run_render()
             elif self.kind == "publish_youtube":
                 self._run_publish_youtube()
+            elif self.kind == "publish_instagram":
+                self._run_publish_instagram()
             else:
                 self._run_pipeline()
         except CancelledError:
@@ -1045,6 +1047,44 @@ class Job:
                  message=f"Published to YouTube ({meta.get('privacy', 'private')}).",
                  result={"video_url": url})
 
+    def _run_publish_instagram(self):
+        """Publish a rendered output as a Reel via the official Graph API."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from publish.instagram import InstagramConnector
+        from publish.youtube import PublishError
+
+        video = Path(self.url or "")
+        try:
+            video.resolve().relative_to(VIDEO_OUTPUT_DIR.resolve())
+        except ValueError:
+            self.fail("invalid_request",
+                      "Only rendered videos in Output/videos can be published.")
+            return
+        if not video.is_file():
+            self.fail("not_found", "The rendered video file was not found.")
+            return
+
+        def progress(frac):
+            self._check_cancel()
+            self.set(progress=0.1 + 0.8 * frac,
+                     message="Instagram is processing the video…")
+
+        self.set(state="downloading", progress=0.05,
+                 message="Uploading temporarily and creating the Reel…")
+        try:
+            url = InstagramConnector().publish(
+                video, caption=self.publish_meta.get("description", ""),
+                progress=progress)
+        except PublishError as exc:
+            self.fail("publish_failed", str(exc))
+            return
+        from projects import ProjectStore
+        ProjectStore(PROJECTS_DB_PATH).record_publish(
+            self.source_job_id or "0" * 32, "instagram", url)
+        self.set(state="done", progress=1.0,
+                 message="Published to Instagram.",
+                 result={"video_url": url})
+
     def _run_subprocess(self, cmd):
         """Run a tool with list args (never a shell); poll for cancellation."""
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -1142,6 +1182,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, payload)
             return
+        if self.path == "/instagram/status":
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish.instagram import InstagramConnector
+            self._send_json(200,
+                            {"connected": InstagramConnector().is_connected()})
+            return
         if self.path.startswith("/youtube/status"):
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from publish.youtube import YouTubeConnector
@@ -1201,7 +1247,18 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             kind = body.get("kind", "download")
-            if kind == "publish_youtube":
+            if kind == "publish_instagram":
+                source_id = body.get("source_job_id", "")
+                if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
+                    self._send_json(400, {"error_code": "not_found",
+                                          "message": "A valid 'source_job_id' is required."})
+                    return
+                job = Job(kind="publish_instagram",
+                          url=str(body.get("output_path") or ""),
+                          source_job_id=source_id)
+                job.publish_meta = {
+                    "description": str(body.get("caption") or "")[:2200]}
+            elif kind == "publish_youtube":
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",
@@ -1388,6 +1445,35 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"auth_url": build_auth_url(client_id,
                                                              challenge, state),
                                   "state": state})
+            return
+
+        if self.path == "/instagram/connect":
+            body = self._read_json_body() or {}
+            token = str(body.get("access_token") or "").strip()
+            user_id = str(body.get("ig_user_id") or "").strip()
+            s3 = body.get("s3") if isinstance(body.get("s3"), dict) else {}
+            if not token or not user_id:
+                self._send_json(400, {"error_code": "invalid_request",
+                                      "message": "access_token and ig_user_id are required."})
+                return
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish.instagram import InstagramConnector
+            from publish.youtube import PublishError
+            try:
+                username = InstagramConnector().store_connection(
+                    token, user_id, s3)
+            except PublishError as exc:
+                self._send_json(400, {"error_code": "instagram_failed",
+                                      "message": str(exc)})
+                return
+            self._send_json(200, {"connected": True, "username": username})
+            return
+
+        if self.path == "/instagram/disconnect":
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from publish.instagram import InstagramConnector
+            InstagramConnector().disconnect()
+            self._send_json(200, {"connected": False})
             return
 
         if self.path == "/youtube/disconnect":
