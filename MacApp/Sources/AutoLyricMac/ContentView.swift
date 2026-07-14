@@ -777,8 +777,9 @@ struct ContentView: View {
                     .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
                 Button("Türkçe'ye Çevir") { startTranslate() }
                     .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
-                    .help("Sözleri Türkçe'ye çevirir (Claude; yoksa Argos). "
-                          + "Türkçe şarkılar atlanır, elle girdiğin çeviriler korunur.")
+                    .help("Her satırı Türkçe'ye çevirir (Claude; yoksa Argos), "
+                          + "böylece çeviri satırla eşleşir. Türkçe şarkılar "
+                          + "atlanır. Elle düzenlemek için “Türkçe Çeviriler…”.")
                 Button("Türkçe Çeviriler…") {
                     manualTranslationsDraft = ""
                     showManualTranslations = true
@@ -1837,8 +1838,12 @@ struct ContentView: View {
 
     private func startTranslate() {
         guard let source = activeJob, source.state == "done" else { return }
+        // force: re-translate every line so each matches its own lyric
+        // (repeated lines get identical, correct translations — fixes any
+        // drift from imported/hand-pasted translations)
         runLyricsJob("Turkish translation",
-                     create: { try await engine.createTranslateJob(sourceJobId: source.jobId) },
+                     create: { try await engine.createTranslateJob(
+                         sourceJobId: source.jobId, force: true) },
                      onDone: { _ in await refreshLyrics() })
     }
 

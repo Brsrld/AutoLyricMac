@@ -9,8 +9,10 @@ right-to-left. All helpers degrade gracefully if a font or lib is missing.
 """
 
 # macOS system fonts with full coverage for right-to-left scripts.
-FONT_ARABIC = "/System/Library/Fonts/SFArabic.ttf"
-FONT_ARABIC_FALLBACK = "/System/Library/Fonts/Supplemental/GeezaPro.ttc"
+# Geeza Pro renders every Arabic presentation form cleanly; SF Arabic drops
+# a few (e.g. final heh ﻪ shows as a tofu box), so it's only the fallback.
+FONT_ARABIC = "/System/Library/Fonts/GeezaPro.ttc"
+FONT_ARABIC_FALLBACK = "/System/Library/Fonts/SFArabic.ttf"
 FONT_HEBREW = "/System/Library/Fonts/Supplemental/Arial Hebrew.ttf"
 
 

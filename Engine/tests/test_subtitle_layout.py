@@ -97,6 +97,15 @@ class TestFontShaping(unittest.TestCase):
         self.assertFalse(fonts.has_arabic("hold on tight"))
         self.assertFalse(fonts.is_rtl("bülbül bülbül"))
 
+    def test_arabic_font_path_exists(self):
+        """The chosen Arabic font must be a real file (else glyphs tofu)."""
+        from pathlib import Path
+        from subtitles import fonts
+        latin = "/System/Library/Fonts/Supplemental/AmericanTypewriter.ttc"
+        resolved = fonts.font_for("قلبي", latin)
+        self.assertNotEqual(resolved, latin, "no Arabic font resolved")
+        self.assertTrue(Path(resolved).exists(), resolved)
+
     def test_arabic_gets_non_latin_font(self):
         from subtitles import fonts
         latin = "/System/Library/Fonts/Supplemental/AmericanTypewriter.ttc"
