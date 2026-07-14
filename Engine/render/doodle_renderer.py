@@ -188,10 +188,17 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None,
     duration = float(plan["segment_end"]) - seg_start
 
     lut = warm_memory_lut()
+    # line-boil (hand-drawn wobble) only suits the ink storybook look; Ghibli,
+    # realistic, watercolor etc. stay steady (still get the gentle push-in)
+    try:
+        from media.genai import art_style_uses_boil
+        boil_ok = art_style_uses_boil(plan.get("art_style") or "storybook")
+    except Exception:
+        boil_ok = True
     backgrounds = []
     for si, sc in enumerate(scenes):
         bg = build_scene_background(sc, lut)
-        if (sc.get("media") or {}).get("provider") == "fal_ai":
+        if boil_ok and (sc.get("media") or {}).get("provider") == "fal_ai":
             backgrounds.append(_boil_variants(bg, seed=si * 17 + 5))
         else:
             backgrounds.append([bg])

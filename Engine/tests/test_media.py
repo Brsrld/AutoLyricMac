@@ -323,6 +323,49 @@ class TestCrop(unittest.TestCase):
         img = make_image(7, size=(1600, 900))
         self.assertEqual(subject_crop(img), subject_crop(img))
 
+class TestArtStyles(unittest.TestCase):
+    """Selectable AI art directions for drawn (Doodle) scenes."""
+
+    def _scene(self):
+        return {"queries": ["rainy city street"], "emotion": "melancholy",
+                "lyric": "walking home alone", "scene_index": 0}
+
+    def test_each_style_produces_distinct_prompt(self):
+        from media.genai import ART_STYLES, build_prompt
+        seen = {}
+        for key in ART_STYLES:
+            p = build_prompt(self._scene(), style=key)
+            self.assertTrue(p, key)
+            self.assertNotIn(p, seen.values(),
+                             f"{key} prompt not distinct")
+            seen[key] = p
+
+    def test_all_drawn_styles_forbid_text(self):
+        from media.genai import ART_STYLES, build_prompt
+        for key in ART_STYLES:
+            p = build_prompt(self._scene(), style=key)
+            self.assertIn("no text", p, key)
+            if key != "photo":
+                # drawn styles never quote the lyric (avoids garbled text)
+                self.assertNotIn("walking home alone", p, key)
+
+    def test_doodle_alias_maps_to_storybook(self):
+        from media.genai import build_prompt
+        self.assertEqual(build_prompt(self._scene(), style="doodle"),
+                         build_prompt(self._scene(), style="storybook"))
+
+    def test_only_storybook_uses_boil(self):
+        from media.genai import ART_STYLES, art_style_uses_boil
+        self.assertTrue(art_style_uses_boil("storybook"))
+        self.assertTrue(art_style_uses_boil("doodle"))
+        for key in ("ghibli", "realistic", "watercolor", "anime", "oil"):
+            self.assertFalse(art_style_uses_boil(key), key)
+
+    def test_unknown_style_falls_back_to_photo(self):
+        from media.genai import build_prompt
+        self.assertEqual(build_prompt(self._scene(), style="zzz"),
+                         build_prompt(self._scene(), style="photo"))
+
 
 if __name__ == "__main__":
     unittest.main()

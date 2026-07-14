@@ -416,7 +416,8 @@ final class EngineClient: ObservableObject {
     /// Build a scene plan from aligned lyrics + audio analysis.
     func createPlanJob(sourceJobId: String, style: String,
                        segmentStart: Double, targetSeconds: Int,
-                       theme: String = "") async throws -> String {
+                       theme: String = "",
+                       artStyle: String = "storybook") async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "plan",
@@ -424,7 +425,8 @@ final class EngineClient: ObservableObject {
                                                      "style": style,
                                                      "segment_start": segmentStart,
                                                      "target_seconds": targetSeconds,
-                                                     "theme": theme],
+                                                     "theme": theme,
+                                                     "art_style": artStyle],
                                               timeout: 15)
         return created.jobId
     }
@@ -434,11 +436,13 @@ final class EngineClient: ObservableObject {
     /// every scene; `exclude` bans specific assets for this project.
     func createMediaJob(sourceJobId: String, apiKeys: [String: String],
                         regenerate: Bool = false,
+                        artStyle: String? = nil,
                         exclude: [(provider: String, ref: String)] = []) async throws -> String {
         struct Created: Decodable { let jobId: String }
         var body: [String: Any] = ["kind": "media",
                                    "source_job_id": sourceJobId,
                                    "api_keys": apiKeys]
+        if let artStyle { body["art_style"] = artStyle }
         if regenerate { body["regenerate"] = true }
         if !exclude.isEmpty {
             body["exclude"] = exclude.map {

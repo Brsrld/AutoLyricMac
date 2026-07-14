@@ -54,6 +54,15 @@ SUBTITLE_STYLES = ("archiveCollage", "doodleMemory",
 PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
 RENDER_STYLES = ("archiveCollage", "doodleMemory",
                  "polaroidWall", "minimalDark", "cinemaStill")
+# art directions for AI-drawn (Doodle template) scenes; see media/genai.py
+ART_STYLES = ("storybook", "ghibli", "realistic", "watercolor",
+              "anime", "oil")
+
+
+def _clean_art_style(value):
+    """Return a valid art style or None (falls back to the plan default)."""
+    v = str(value or "").strip()
+    return v if v in ART_STYLES else None
 
 
 def is_drawn_media(media):
@@ -279,6 +288,7 @@ class Job:
         self.api_keys = api_keys or {}
         self.regenerate = False          # media job: refetch every scene
         self.exclude_assets = []         # media job: [(provider, ref), ...]
+        self.art_style = None            # plan/media job: AI-draw art style
         self.motion_effects = False      # render job: flicker + breathing
         self.publish_meta = {}           # publish job: title/desc/privacy
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
@@ -948,6 +958,7 @@ class Job:
                                 seg_start, seg_end, title_hint=title_hint,
                                 extra_queries=theme_queries, **kwargs)
         plan["source_job_id"] = self.source_job_id
+        plan["art_style"] = self.art_style or "storybook"
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
         from projects import ProjectStore
@@ -992,6 +1003,11 @@ class Job:
             return
 
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        # art style may be changed at media time without a full replan;
+        # persist it so the renderer reads the same choice
+        if self.art_style:
+            plan["art_style"] = self.art_style
+        art_style = plan.get("art_style") or "storybook"
         store = MediaStore(MEDIA_DB_PATH)
         for provider, ref in self.exclude_assets:
             store.exclude_asset(self.source_job_id, provider, ref)
@@ -1044,7 +1060,7 @@ class Job:
                     from media.crop import adaptation_plan as _ap
                     scene["scene_index"] = scene.get("scene_index", i)
                     cand, data = generate_image(scene, draw_key,
-                                                style="doodle")
+                                                style=art_style)
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     gen_path = dest_dir / f"drawn_{i}.jpg"
                     gen_path.write_bytes(data)
@@ -1611,6 +1627,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         return
                     job = Job(kind="plan", source_job_id=source_id, style=style,
                               target_seconds=target, segment_start=seg_start)
+                    job.art_style = _clean_art_style(body.get("art_style"))
                     job.publish_meta = {
                         "theme": str(body.get("theme") or "").strip()[:300]}
                 else:
@@ -1623,6 +1640,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                                 and str(raw_keys[name]).strip()}
                     job = Job(kind="media", source_job_id=source_id,
                               api_keys=api_keys)
+                    job.art_style = _clean_art_style(body.get("art_style"))
                     job.regenerate = bool(body.get("regenerate"))
                     raw_exclude = body.get("exclude") or []
                     if isinstance(raw_exclude, list):

@@ -54,6 +54,7 @@ struct ContentView: View {
     // Scene plan & media (Phase 4)
     @State private var planTheme: String = ""
     @State private var planStyle: String = "automatic"
+    @State private var artStyle: String = "storybook"
     @State private var motionEffects: Bool = false
     @State private var planJob: JobStatus?
     @State private var planTask: Task<Void, Never>?
@@ -1127,6 +1128,28 @@ struct ContentView: View {
                     Button("Cancel", role: .cancel) { cancelPlanJob() }
                 }
             }
+            if planStyle == "doodleMemory" || planStyle == "automatic" {
+                HStack(spacing: 8) {
+                    Text("AI art style")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Picker("AI art style", selection: $artStyle) {
+                        Text("Storybook Doodle").tag("storybook")
+                        Text("Ghibli Anime").tag("ghibli")
+                        Text("Realistic").tag("realistic")
+                        Text("Watercolor").tag("watercolor")
+                        Text("Modern Anime").tag("anime")
+                        Text("Oil Painting").tag("oil")
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                    Text("Only affects Doodle scenes drawn by fal.ai. "
+                         + "Change then Build/Regenerate Media.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
             Toggle("Subtle motion effects (flicker & breathing)",
                    isOn: $motionEffects)
                 .toggleStyle(.checkbox)
@@ -1882,7 +1905,8 @@ struct ContentView: View {
                                            style: planStyle,
                                            segmentStart: segmentStart,
                                            targetSeconds: durationSeconds,
-                                           theme: theme)
+                                           theme: theme,
+                                           artStyle: artStyle)
         }
     }
 
@@ -1903,7 +1927,8 @@ struct ContentView: View {
         runPlanJob(regenerate ? "Media regenerate" : "Media fetch") {
             try await engine.createMediaJob(sourceJobId: source.jobId,
                                             apiKeys: keys,
-                                            regenerate: regenerate)
+                                            regenerate: regenerate,
+                                            artStyle: artStyle)
         }
     }
 
