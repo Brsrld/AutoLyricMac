@@ -173,7 +173,8 @@ def _bounce(t, pulse_beats, amp=9.0, decay=0.18):
     return 0.0
 
 
-def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
+def render_doodle(plan, words_by_line, audio_path, out_path, progress=None,
+                  motion_effects=False):
     """Render the Doodle Memory video for a media-annotated plan.
 
     `words_by_line`: {line_index: [{"text","start","end"}]} with times
@@ -254,7 +255,9 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
         scene_len = max(0.001, scene["end"] - scene["start"])
         t_local = t - scene["start"]
         local = min(1.0, max(0.0, t_local / scene_len))
-        pulses = scene.get("motion", {}).get("pulse_beats", [])
+        # beat micro-bounce is a "titreme"/throb — off unless effects on
+        pulses = (scene.get("motion", {}).get("pulse_beats", [])
+                  if motion_effects else [])
 
         bgs = backgrounds[idx]
         bg = bgs[int(t * 6) % len(bgs)]
@@ -273,7 +276,9 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None):
             sprite = prep["sprites"][int(t * 6) % len(prep["sprites"])]
         if sprite is not None:
             enter = ease_in_out(min(1.0, t_local / 0.3))
-            breathe = 1.0 + 0.028 * math.sin(2 * math.pi * t_local / 1.8)
+            # "nefes alma": gentle scale breathing — off unless effects on
+            breathe = (1.0 + 0.028 * math.sin(2 * math.pi * t_local / 1.8)
+                       if motion_effects else 1.0)
             dh = int(layout["height_frac"] * H * breathe)
             dw = int(dh * sprite.width / sprite.height)
             scaled = sprite.resize((max(1, dw), max(1, dh)), Image.BILINEAR)

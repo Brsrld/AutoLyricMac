@@ -478,12 +478,14 @@ final class EngineClient: ObservableObject {
     }
 
     /// Render the final styled video from the media-annotated plan.
-    func createRenderJob(sourceJobId: String, style: String) async throws -> String {
+    func createRenderJob(sourceJobId: String, style: String,
+                         motionEffects: Bool = false) async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "render",
                                                      "source_job_id": sourceJobId,
-                                                     "style": style],
+                                                     "style": style,
+                                                     "motion_effects": motionEffects],
                                               timeout: 15)
         return created.jobId
     }

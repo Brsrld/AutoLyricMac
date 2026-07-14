@@ -279,6 +279,7 @@ class Job:
         self.api_keys = api_keys or {}
         self.regenerate = False          # media job: refetch every scene
         self.exclude_assets = []         # media job: [(provider, ref), ...]
+        self.motion_effects = False      # render job: flicker + breathing
         self.publish_meta = {}           # publish job: title/desc/privacy
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
@@ -1230,11 +1231,13 @@ class Job:
                 from doodle_renderer import render_doodle
                 words = self._words_by_line(float(plan["segment_start"]))
                 qa_frames = render_doodle(plan, words, source_audio, out_path,
-                                          progress=report)
+                                          progress=report,
+                                          motion_effects=self.motion_effects)
             else:
                 from archive_renderer import render_archive
                 qa_frames = render_archive(plan, source_audio, out_path,
-                                           progress=report)
+                                           progress=report,
+                                           motion_effects=self.motion_effects)
         except CancelledError:
             out_path.unlink(missing_ok=True)
             raise
@@ -1582,6 +1585,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                                           "message": f"Rendering supports {RENDER_STYLES} for now."})
                     return
                 job = Job(kind="render", source_job_id=source_id, style=style)
+                job.motion_effects = bool(body.get("motion_effects", False))
             elif kind in ("plan", "media"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):

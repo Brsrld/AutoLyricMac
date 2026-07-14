@@ -362,7 +362,8 @@ def _dust_layer(shape, rng):
 # Main renderer
 # ---------------------------------------------------------------------------
 
-def render_archive(plan, audio_path, out_path, progress=None):
+def render_archive(plan, audio_path, out_path, progress=None,
+                   motion_effects=False):
     global _V
     _V = VARIANTS.get(plan.get("style"), VARIANTS["archiveCollage"])
     """Render the full Archive Collage video for a media-annotated plan.
@@ -449,7 +450,11 @@ def render_archive(plan, audio_path, out_path, progress=None):
     vig = vignette_map(0.16)
     total = int(round(duration * FPS))
     rng = np.random.default_rng(4242)
-    flicker = 1.0 + np.cumsum(rng.normal(0, 0.004, total)).clip(-0.02, 0.02)
+    # "titreme": subtle brightness flicker — only when motion effects are on
+    if motion_effects:
+        flicker = 1.0 + np.cumsum(rng.normal(0, 0.004, total)).clip(-0.02, 0.02)
+    else:
+        flicker = np.ones(total, dtype=np.float32)
     dust_rng = np.random.default_rng(777)
     dust = None
 
@@ -470,7 +475,9 @@ def render_archive(plan, audio_path, out_path, progress=None):
             scene_len = max(0.001, scene["end"] - scene["start"])
             t_local = t - scene["start"]
             local = t_local / scene_len
-            pulses = scene.get("motion", {}).get("pulse_beats", [])
+            # beat pulse is a "titreme"/throb — off unless motion effects on
+            pulses = (scene.get("motion", {}).get("pulse_beats", [])
+                      if motion_effects else [])
 
             variants = variant_layers[idx]
             layer = variants[0]
@@ -518,7 +525,7 @@ def render_archive(plan, audio_path, out_path, progress=None):
             # grade: flicker + vignette + grain (+ dust on flagged scenes)
             arr *= flicker[n] * vig
             arr += grain[n % len(grain)]
-            if "dust_flicker" in (scene.get("overlays") or []):
+            if motion_effects and "dust_flicker" in (scene.get("overlays") or []):
                 if dust is None or n % 5 == 0:
                     dust = _dust_layer(arr.shape, dust_rng)
                 arr += dust

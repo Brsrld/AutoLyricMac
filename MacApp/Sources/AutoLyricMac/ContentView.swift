@@ -54,6 +54,7 @@ struct ContentView: View {
     // Scene plan & media (Phase 4)
     @State private var planTheme: String = ""
     @State private var planStyle: String = "automatic"
+    @State private var motionEffects: Bool = false
     @State private var planJob: JobStatus?
     @State private var planTask: Task<Void, Never>?
     @State private var planError: String?
@@ -553,7 +554,8 @@ struct ContentView: View {
                 stage("7/7 Rendering \(resolvedStyle)…")
                 status = try await awaitJob(
                     engine.createRenderJob(sourceJobId: sourceId,
-                                           style: resolvedStyle)
+                                           style: resolvedStyle,
+                                           motionEffects: motionEffects)
                 ) { planJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
 
@@ -1125,6 +1127,12 @@ struct ContentView: View {
                     Button("Cancel", role: .cancel) { cancelPlanJob() }
                 }
             }
+            Toggle("Subtle motion effects (flicker & breathing)",
+                   isOn: $motionEffects)
+                .toggleStyle(.checkbox)
+                .help("Off by default: no brightness flicker, no beat throb, "
+                      + "no doodle breathing. Turn on for a livelier, filmic "
+                      + "look. Applies to the next render.")
             if analysisJob?.state != "done" {
                 Text("Requires a selected segment (run Analyze first).")
                     .font(.caption)
@@ -1914,7 +1922,8 @@ struct ContentView: View {
         let style = plan?.style ?? "archiveCollage"
         runPlanJob("Render (\(style))") {
             try await engine.createRenderJob(sourceJobId: source.jobId,
-                                             style: style)
+                                             style: style,
+                                             motionEffects: motionEffects)
         }
     }
 
