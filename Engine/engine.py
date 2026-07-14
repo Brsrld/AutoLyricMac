@@ -739,32 +739,20 @@ class Job:
         self._check_cancel()
 
         self.set(progress=0.7, message="Aligning lyrics to audio…")
-        from lyrics.align import (align_from_lrc, align_lyrics_monotonic,
-                                  is_monotonic, merge_lrc_fallback)
+        from lyrics.align import align_hybrid
         line_texts = [ln["display_text"] for ln in payload["lines"]]
-        aligned, matched_ratio, mean_confidence = align_lyrics_monotonic(
-            line_texts, asr_words)
-        # hybrid: synced-lyrics timestamps rescue lines ASR could not hear.
-        # Use the IMMUTABLE LRC spans (re-parsed from raw_lrc), never the
-        # stored line timings — a prior align may have overwritten those.
-        seed_spans = dict(payload.get("lrc_spans") or {}) \
+        # IMMUTABLE synced-LRC spans (re-parsed from raw_lrc, never the stored
+        # line timings — a prior align may have overwritten those).
+        lrc_spans = {int(k): v for k, v in (payload.get("lrc_spans") or {}).items()} \
             if payload["synced"] else {}
-        rescued = merge_lrc_fallback(aligned, seed_spans)
-        if rescued:
-            mean_confidence = round(sum(l["confidence"] for l in aligned)
-                                    / max(1, len(aligned)), 4)
-            print(f"[engine] job {self.id} align: {rescued} line(s) timed "
-                  f"from synced lyrics fallback", flush=True)
-        # A synced LRC is a clean, monotonic ground truth. If ASR barely
-        # matched (foreign scripts, heavy instrumentation) or the hybrid
-        # came out scrambled, a few wrong ASR matches have corrupted good
-        # LRC timings — trust the LRC timeline wholesale instead.
-        if seed_spans and (matched_ratio < 0.6 or not is_monotonic(aligned)):
-            aligned, matched_ratio, mean_confidence = align_from_lrc(
-                line_texts, seed_spans)
-            print(f"[engine] job {self.id} align: weak/scrambled ASR match — "
-                  f"using synced LRC timeline directly "
-                  f"({matched_ratio:.0%} of lines timed)", flush=True)
+        # precise ASR word timing where heard + clean LRC skeleton elsewhere,
+        # offset-corrected and clamped monotonic (foreign/instrumental songs
+        # fall back to the LRC timeline instead of scrambling it)
+        aligned, matched_ratio, mean_confidence = align_hybrid(
+            line_texts, lrc_spans, asr_words)
+        print(f"[engine] job {self.id} align: hybrid — "
+              f"{matched_ratio:.0%} of lines matched to ASR word timing"
+              f"{', LRC skeleton' if lrc_spans else ''}", flush=True)
         store.apply_alignment(self.source_job_id, aligned, matched_ratio,
                               mean_confidence)
 

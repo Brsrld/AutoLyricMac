@@ -272,6 +272,74 @@ def words_to_lines(words, gap=0.9, max_words=8):
 LRC_FALLBACK_CONFIDENCE = 0.6
 
 
+ASR_TRUST_MIN = 0.4         # below this, ASR is noise — use LRC wholesale
+
+
+def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN):
+    """Best-of-both alignment: precise ASR word timing + clean LRC skeleton.
+
+    1. Match lyric lines against the ASR word stream (wide forward search),
+       so heard lines get exact per-word timings — words land where they're
+       actually sung.
+    2. When ASR matched a useful fraction of lines, keep those precise
+       timings and fill the lines ASR could not hear from the synced LRC,
+       shifted by the *median drift* between matched ASR and LRC times so
+       the whole timeline is consistently offset-corrected.
+    3. When ASR barely matched (foreign scripts, heavy instrumentation) the
+       matches are noise, so trust the LRC timeline wholesale instead.
+    4. Clamp the result monotonic — line order can never scramble.
+
+    Returns (aligned, matched_ratio, mean_confidence).
+    """
+    import statistics
+
+    aligned, matched_ratio, mean_conf = align_lyrics_monotonic(
+        line_texts, asr_words)
+    if not lrc_spans:
+        return aligned, matched_ratio, mean_conf
+
+    if matched_ratio < trust_min:
+        return align_from_lrc(line_texts, lrc_spans)
+
+    # median drift between confidently-matched ASR lines and their LRC slot
+    drifts = []
+    for line in aligned:
+        if line["start"] is not None and line["confidence"] >= 0.45:
+            sp = lrc_spans.get(line["line_index"])
+            if sp and sp[0] is not None:
+                drifts.append(line["start"] - float(sp[0]))
+    drift = statistics.median(drifts) if drifts else 0.0
+
+    shifted = {li: (sp[0] + drift,
+                    (sp[1] + drift) if sp[1] is not None else None)
+               for li, sp in lrc_spans.items() if sp and sp[0] is not None}
+    merge_lrc_fallback(aligned, shifted)
+    _clamp_monotonic(aligned)
+
+    timed = [l for l in aligned if l["start"] is not None]
+    mean_conf = (round(sum(l["confidence"] for l in timed) / len(timed), 4)
+                 if timed else 0.0)
+    return aligned, matched_ratio, mean_conf
+
+
+def _clamp_monotonic(aligned):
+    """Force non-decreasing line starts in place (safety net)."""
+    last = None
+    for line in aligned:
+        s = line.get("start")
+        if s is None:
+            continue
+        if last is not None and s < last:
+            shift = last - s
+            line["start"] = round(s + shift, 3)
+            line["end"] = round((line["end"] or line["start"]) + shift, 3)
+            for w in line.get("words") or []:
+                if w.get("start") is not None:
+                    w["start"] = round(w["start"] + shift, 3)
+                    w["end"] = round((w["end"] or w["start"]) + shift, 3)
+        last = line["start"]
+
+
 def is_monotonic(aligned, tol=0.05):
     """True if timed line starts never move backward (a sane timeline).
 

@@ -147,5 +147,52 @@ class TestLrcWholesaleAndMonotonic(unittest.TestCase):
         self.assertEqual(cov, 0.5)
 
 
+class TestHybridAlignment(unittest.TestCase):
+    """Precise ASR word timing + clean LRC skeleton, offset-fixed, in order."""
+
+    def test_asr_words_give_precise_timing_and_fill_offset_corrected(self):
+        from lyrics.align import align_hybrid, is_monotonic
+        texts = ["hold on tight", "silent gap line", "let it go"]
+        # LRC ~0.5s early vs. the vocals ASR actually heard
+        spans = {0: (10.0, 12.5), 1: (12.5, 14.5), 2: (14.5, 17.0)}
+        asr = [{"text": "hold", "start": 10.5, "end": 10.9, "prob": 0.9},
+               {"text": "on", "start": 10.9, "end": 11.2, "prob": 0.9},
+               {"text": "tight", "start": 11.2, "end": 11.8, "prob": 0.9},
+               {"text": "let", "start": 15.0, "end": 15.2, "prob": 0.9},
+               {"text": "it", "start": 15.2, "end": 15.4, "prob": 0.9},
+               {"text": "go", "start": 15.4, "end": 15.9, "prob": 0.9}]
+        aligned, matched, _ = align_hybrid(texts, spans, asr, trust_min=0.4)
+        self.assertGreaterEqual(matched, 0.4)
+        self.assertTrue(is_monotonic(aligned))
+        # heard lines carry exact ASR word times
+        self.assertAlmostEqual(aligned[0]["words"][0]["start"], 10.5, places=2)
+        self.assertAlmostEqual(aligned[2]["words"][0]["start"], 15.0, places=2)
+        # the unheard middle line is still timed (LRC + drift), in order
+        self.assertIsNotNone(aligned[1]["start"])
+        self.assertLessEqual(aligned[0]["start"], aligned[1]["start"])
+        self.assertLessEqual(aligned[1]["start"], aligned[2]["start"])
+
+    def test_weak_asr_falls_back_to_pure_lrc(self):
+        from lyrics.align import align_hybrid, is_monotonic
+        texts = ["الف", "باء", "تاء", "ثاء"]
+        spans = {0: (5.0, 7.0), 1: (7.0, 9.0), 2: (9.0, 11.0), 3: (11.0, 13.0)}
+        asr = [{"text": "totally", "start": 2.0, "end": 2.4, "prob": 0.9},
+               {"text": "different", "start": 40.0, "end": 40.4, "prob": 0.9}]
+        aligned, matched, _ = align_hybrid(texts, spans, asr, trust_min=0.4)
+        self.assertTrue(is_monotonic(aligned))
+        self.assertAlmostEqual(aligned[0]["start"], 5.0, places=2)  # clean LRC
+        self.assertAlmostEqual(aligned[3]["start"], 11.0, places=2)
+
+    def test_no_lrc_uses_pure_asr(self):
+        from lyrics.align import align_hybrid
+        texts = ["hold on tight"]
+        asr = [{"text": "hold", "start": 1.0, "end": 1.3, "prob": 0.9},
+               {"text": "on", "start": 1.3, "end": 1.6, "prob": 0.9},
+               {"text": "tight", "start": 1.6, "end": 2.0, "prob": 0.9}]
+        aligned, matched, _ = align_hybrid(texts, {}, asr)
+        self.assertEqual(matched, 1.0)
+        self.assertAlmostEqual(aligned[0]["start"], 1.0, places=2)
+
+
 if __name__ == "__main__":
     unittest.main()
