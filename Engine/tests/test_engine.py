@@ -138,5 +138,23 @@ class TestSafePaths(unittest.TestCase):
                 job_dir_for(bad, base_dir=self.base)
 
 
+class TestDrawnMediaGuard(unittest.TestCase):
+    """Photo styles must never show AI-drawn Doodle illustrations."""
+
+    def test_drawn_doodle_asset_is_detected(self):
+        from engine import is_drawn_media
+        self.assertTrue(is_drawn_media(
+            {"provider": "fal_ai", "file_path": "/c/media/x/drawn_3.jpg"}))
+
+    def test_stock_and_photo_fallback_assets_pass(self):
+        from engine import is_drawn_media
+        self.assertFalse(is_drawn_media(None))
+        self.assertFalse(is_drawn_media(
+            {"provider": "pexels", "file_path": "/c/media/x/pexels_1.jpg"}))
+        # photorealistic AI fallback (gen_*) is not a doodle drawing
+        self.assertFalse(is_drawn_media(
+            {"provider": "fal_ai", "file_path": "/c/media/x/gen_2.jpg"}))
+
+
 if __name__ == "__main__":
     unittest.main()

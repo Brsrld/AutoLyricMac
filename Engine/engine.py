@@ -55,6 +55,19 @@ PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
 RENDER_STYLES = ("archiveCollage", "doodleMemory",
                  "polaroidWall", "minimalDark", "cinemaStill")
 
+
+def is_drawn_media(media):
+    """True when a scene's media is an AI-drawn Doodle illustration.
+
+    Photo styles (Archive family, Cinematic Still) must never show these;
+    they are only valid while the plan style is doodleMemory.
+    """
+    if not media:
+        return False
+    if str(media.get("provider", "")).startswith("fal"):
+        return str(Path(media.get("file_path") or "").name).startswith("drawn_")
+    return False
+
 # Minimum free disk space required before starting a download.
 MIN_FREE_BYTES = 500 * 1024 * 1024
 
@@ -998,6 +1011,13 @@ class Job:
                 scene["media"] = None
         dest_dir = MEDIA_CACHE_DIR / self.source_job_id
         scenes = plan["scenes"]
+        # A style switch away from Doodle Memory can leave AI-drawn
+        # illustrations in the plan; photo styles must only show photographs,
+        # so those scenes go back to stock search.
+        if plan.get("style") != "doodleMemory":
+            for scene in scenes:
+                if is_drawn_media(scene.get("media")):
+                    scene["media"] = None
         # Doodle Memory scenes are DRAWN, not photographed: generate a
         # doodle-style illustration per scene (cached by prompt) and skip
         # stock search entirely when a fal key is available.
@@ -1073,13 +1093,15 @@ class Job:
                     log=lambda m: print(f"[engine] job {self.id} media: {m}",
                                         flush=True))
             except MediaProviderError as exc:
-                # spec: AI generation is fallback-only, when stock fails
+                # spec: AI generation is fallback-only, when stock fails —
+                # and Cinematic Still is photographs-only, never generated
                 fal_key = None
-                try:
-                    from publish.youtube import Keychain
-                    fal_key = Keychain().get("fal_api_key")
-                except Exception:
-                    pass
+                if plan.get("style") != "cinemaStill":
+                    try:
+                        from publish.youtube import Keychain
+                        fal_key = Keychain().get("fal_api_key")
+                    except Exception:
+                        pass
                 if fal_key:
                     try:
                         from media.genai import generate_image
@@ -1182,6 +1204,14 @@ class Job:
         with_media = sum(1 for s in plan["scenes"] if s.get("media"))
         if with_media == 0:
             self.fail("not_found", "Fetch licensed media before rendering.")
+            return
+        if self.style != "doodleMemory" \
+                and any(is_drawn_media(s.get("media"))
+                        for s in plan["scenes"]):
+            self.fail("stale_media",
+                      "This plan still holds AI-drawn Doodle scenes; run "
+                      "Build Media (or Regenerate Media) to fetch photos "
+                      f"before rendering {self.style}.")
             return
 
         duration = float(plan["segment_end"]) - float(plan["segment_start"])
