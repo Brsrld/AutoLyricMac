@@ -41,6 +41,11 @@ VARIANTS = {
     "minimalDark":    {"canvas": (16, 16, 20), "rot": 0.0,
                        "border": "none", "sub_bg": (28, 28, 34),
                        "sub_ink": (238, 236, 230), "grade": "dark"},
+    "cinemaStill":    {"canvas": (0, 0, 0), "rot": 0.0,
+                       "border": "none", "sub_bg": (8, 8, 10),
+                       "sub_ink": (245, 243, 238), "grade": "dark",
+                       "full": True, "sub_center": True, "fade": 1.1,
+                       "sub_pad": (26, 13)},
 }
 _V = VARIANTS["archiveCollage"]   # active variant; render_archive swaps it
 BLOCK_PALETTE = [        # translucent layered rectangles (grey/black/white)
@@ -121,6 +126,11 @@ def scene_layout(scene, index):
                            "w": ew + rng.uniform(-0.03, 0.04),
                            "rotation": rng.uniform(-1.2, 1.2)})
 
+    if _V.get("full"):
+        return {"photo_w": OVERSIZE, "photo_pos": (0.0, 0.0),
+                "rotation": 0.0, "blocks": [], "extras": [],
+                "zoom": (1.0, 1.035), "drift": ((0, 0), (0, 0)),
+                "max_photo_h": OVERSIZE}
     return {
         "photo_w": photo_w if not extras else min(photo_w, 0.72),
         "photo_pos": photo_pos,
@@ -197,6 +207,14 @@ def build_scene_layer(scene, layout, seed, pool=()):
             board.paste(block, (bx, by), block)
 
     photo = _load_scene_photo(scene)
+    if photo is not None and _V.get("full"):
+        if _V["grade"] == "dark":
+            from PIL import ImageEnhance
+            photo = ImageEnhance.Contrast(
+                ImageEnhance.Color(photo).enhance(0.92)).enhance(1.06)
+        from proto_common import cover_resize
+        board.paste(cover_resize(photo, bw, bh), (0, 0))
+        return board
     if photo is not None:
         if _V["grade"] == "dark":
             from PIL import ImageEnhance
@@ -413,13 +431,18 @@ def render_archive(plan, audio_path, out_path, progress=None):
         block, size = build_archive_subtitle(
             scene["lyric"], scene.get("translation"), seed=i,
             uncertain=bool(scene.get("uncertain")),
-            bg=_V["sub_bg"], ink=_V["sub_ink"])
+            bg=_V["sub_bg"], ink=_V["sub_ink"],
+            pad=_V.get("sub_pad", (14, 6)))
         if block is None:
             subtitles.append(None)
             continue
-        band = (scene.get("subtitle") or {}).get("band", "lower")
-        rect = place_block(size, avoid=[subtitle_avoid_rect(layouts[i])],
-                           preferred=band, seed=i)
+        if _V.get("sub_center"):
+            rect = Rect((W - size[0]) / 2, (H - size[1]) / 2,
+                        size[0], size[1])
+        else:
+            band = (scene.get("subtitle") or {}).get("band", "lower")
+            rect = place_block(size, avoid=[subtitle_avoid_rect(layouts[i])],
+                               preferred=band, seed=i)
         subtitles.append((block, rect))
 
     grain = make_grain_frames(strength=4.5)
@@ -468,8 +491,17 @@ def render_archive(plan, audio_path, out_path, progress=None):
                                         scene_len, t_local, pulses)
                 arr = prev_arr * (1 - blend_p) + arr * blend_p
 
-            # sentence changes are clean cuts: the new photo count and
-            # placement IS the transition (user direction, and cheaper)
+            # sentence changes: clean cuts by default; cinemaStill melts
+            # between stills with a long eased crossfade
+            fade = _V.get("fade", 0)
+            if fade and idx > 0 and t_local < fade:
+                prev = scenes[idx - 1]
+                prev_len = max(0.001, prev["end"] - prev["start"])
+                prev_arr = _scene_frame(variant_layers[idx - 1][0],
+                                        layouts[idx - 1], 1.0, prev_len,
+                                        prev_len, [])
+                pgs = ease_in_out(t_local / fade)
+                arr = prev_arr * (1 - pgs) + arr * pgs
             # subtitle strip (enter 0.35s after transition, exit 0.25s)
             if subtitles[idx] is not None:
                 block, rect = subtitles[idx]

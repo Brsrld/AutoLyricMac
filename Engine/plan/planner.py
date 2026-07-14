@@ -60,7 +60,7 @@ _OVERLAYS = {
     "doodleMemory": ["warm_grain"],
 }
 
-for _alias in ("polaroidWall", "minimalDark"):
+for _alias in ("polaroidWall", "minimalDark", "cinemaStill"):
     _DURATIONS[_alias] = _DURATIONS["archiveCollage"]
     _MOTIONS[_alias] = _MOTIONS["archiveCollage"]
     _TRANSITIONS[_alias] = _TRANSITIONS["archiveCollage"]

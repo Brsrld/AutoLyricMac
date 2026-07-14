@@ -427,6 +427,7 @@ struct ContentView: View {
                     Text("Doodle Memory").tag("doodleMemory")
                     Text("Polaroid Wall").tag("polaroidWall")
                     Text("Minimal Dark").tag("minimalDark")
+                    Text("Cinematic Still").tag("cinemaStill")
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
@@ -1100,6 +1101,7 @@ struct ContentView: View {
                     Text("Doodle Memory").tag("doodleMemory")
                     Text("Polaroid Wall").tag("polaroidWall")
                     Text("Minimal Dark").tag("minimalDark")
+                    Text("Cinematic Still").tag("cinemaStill")
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()

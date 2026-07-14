@@ -65,7 +65,7 @@ def _mark_uncertain(sticker):
 
 def build_archive_subtitle(text, translation=None, seed=0, uncertain=False,
                            max_width=int(SAFE_ZONE.w * 0.92),
-                           bg=(235, 224, 200), ink=INK):
+                           bg=(235, 224, 200), ink=INK, pad=(14, 6)):
     """RGBA block of stacked paper strips; returns (image, logical_size)."""
     measure_en = _measurer(FONT_TYPEWRITER, EN_SIZE)
     measure_tr = _measurer(FONT_TYPEWRITER, TR_SIZE)
@@ -75,7 +75,7 @@ def build_archive_subtitle(text, translation=None, seed=0, uncertain=False,
     for i, line in enumerate(wrap_text(text, max_width - pad_w, measure_en)):
         strips.append(paper_sticker(
             line, FONT_TYPEWRITER, EN_SIZE, text_fill=ink,
-            bg=bg, pad=(14, 6), rotation=0.0,
+            bg=bg, pad=pad, rotation=0.0,
             seed=seed * 31 + i, jitter=2))
     if translation:
         for i, line in enumerate(wrap_text(translation, max_width - pad_w,
