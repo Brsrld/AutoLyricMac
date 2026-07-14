@@ -1048,6 +1048,20 @@ class Job:
                                    if e not in provider_errors)
             ranked, rejected = rank_media(candidates, scene,
                                           scene_duration=scene["duration"])
+            # let Claude LOOK at the top thumbnails and reorder by fit
+            try:
+                from publish.youtube import Keychain
+                vkey = Keychain().get("anthropic_api_key")
+                if vkey and len(ranked) > 1:
+                    from media.vision_rank import claude_vision_order
+                    theme = self.publish_meta.get("theme", "") or                         plan.get("theme", "")
+                    order = claude_vision_order(ranked, scene, theme, vkey)
+                    ranked = [ranked[k] for k in order]
+                    print(f"[engine] job {self.id} media: scene {i} "
+                          f"vision-ranked", flush=True)
+            except Exception as exc:
+                print(f"[engine] job {self.id} media: vision rank skipped "
+                      f"({exc})", flush=True)
             for cand, reason in rejected[:3]:
                 print(f"[engine] job {self.id} media: rejected "
                       f"{cand.provider}/{cand.provider_ref}: {reason}",
