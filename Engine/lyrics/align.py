@@ -84,6 +84,40 @@ def vocal_energy_envelope(audio_path, ffmpeg="ffmpeg", hop_s=0.5):
     return env, hop_s
 
 
+def vocal_segments(energy, hop_s, thr_frac=0.12, merge_gap=1.2, min_len=0.5):
+    """Contiguous singing regions [(start, end), …] from a vocal envelope.
+
+    Frames above `thr_frac` of peak energy are "singing"; nearby regions are
+    merged across gaps ≤ `merge_gap` (breaths/short rests) and runs shorter
+    than `min_len` are dropped (stray noise). Used to keep subtitles off the
+    screen during real instrumental sections, even when the LRC times a line
+    there.
+    """
+    import numpy as np
+    e = np.asarray(list(energy), dtype=float)
+    if e.size == 0 or e.max() <= 0:
+        return []
+    on = e > e.max() * thr_frac
+    segs = []
+    i, N = 0, len(on)
+    while i < N:
+        if on[i]:
+            j = i
+            while j < N and on[j]:
+                j += 1
+            segs.append([i * hop_s, j * hop_s])
+            i = j
+        else:
+            i += 1
+    merged = []
+    for s in segs:
+        if merged and s[0] - merged[-1][1] <= merge_gap:
+            merged[-1][1] = s[1]
+        else:
+            merged.append(s)
+    return [(round(a, 2), round(b, 2)) for a, b in merged if b - a >= min_len]
+
+
 def estimate_lrc_offset(energy, hop_s, lrc_spans, search=8.0, step=0.1,
                         thr_frac=0.15):
     """Global time offset (s) that best lines the synced LRC up to the audio.

@@ -756,6 +756,20 @@ class Job:
         # offset from the vocal-energy envelope — text-independent, so it
         # works even on foreign songs ASR can't read — and shift the LRC to
         # match the real vocals before aligning.
+        # vocal-activity mask (from separated vocals) so the plan/renderer can
+        # keep subtitles off the screen during real instrumental sections,
+        # even when the LRC times a line there. Written per source job.
+        try:
+            from lyrics.align import vocal_energy_envelope, vocal_segments
+            _env, _hop = vocal_energy_envelope(align_audio, ffmpeg=FFMPEG)
+            segs = vocal_segments(_env, _hop)
+            (job_dir_for(self.source_job_id) / "vocal_segments.json").write_text(
+                json.dumps(segs), encoding="utf-8")
+            print(f"[engine] job {self.id} align: {len(segs)} vocal "
+                  f"segment(s) detected for subtitle gating", flush=True)
+        except Exception as exc:
+            print(f"[engine] job {self.id} align: vocal segmenting skipped "
+                  f"({exc})", flush=True)
         if lrc_spans:
             try:
                 from lyrics.align import (estimate_lrc_offset,
@@ -1094,9 +1108,20 @@ class Job:
             print(f"[engine] job {self.id} plan: LLM semantics unavailable "
                   f"({exc}); using lexicon", flush=True)
         kwargs = {"semantics_fn": semantics_fn} if semantics_fn else {}
+        # real singing regions (from align) so lyric scenes over an
+        # instrumental section are flagged and their subtitle suppressed
+        vocal_segs = []
+        try:
+            vseg_path = job_dir_for(self.source_job_id) / "vocal_segments.json"
+            if vseg_path.exists():
+                vocal_segs = [tuple(s) for s in
+                              json.loads(vseg_path.read_text(encoding="utf-8"))]
+        except Exception:
+            vocal_segs = []
         plan = build_scene_plan(payload["lines"], analysis, self.style,
                                 seg_start, seg_end, title_hint=title_hint,
-                                extra_queries=theme_queries, **kwargs)
+                                extra_queries=theme_queries,
+                                vocal_segments=vocal_segs, **kwargs)
         plan["source_job_id"] = self.source_job_id
         plan["art_style"] = self.art_style or "storybook"
         self._plan_path().write_text(json.dumps(plan, indent=1),

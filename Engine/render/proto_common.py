@@ -248,6 +248,9 @@ def shift_scene_times(scenes, offset, duration):
     for s in scenes:
         s["start"] = max(0.0, min(duration, s["start"] + offset))
         s["end"] = max(s["start"] + 0.1, min(duration, s["end"] + offset))
+        for key in ("vocal_start", "vocal_end"):
+            if s.get(key) is not None:
+                s[key] = max(s["start"], min(duration, s[key] + offset))
     scenes[0]["start"] = 0.0
     scenes[-1]["end"] = duration
     return scenes

@@ -510,11 +510,18 @@ def render_archive(plan, audio_path, out_path, progress=None,
                                         prev_len, [])
                 pgs = ease_in_out(t_local / fade)
                 arr = prev_arr * (1 - pgs) + arr * pgs
-            # subtitle strip (enter 0.35s after transition, exit 0.25s)
-            if subtitles[idx] is not None:
+            # subtitle strip: fade in at the line, fade out shortly after the
+            # last sung word (vocal_end) so it doesn't linger over the
+            # instrumental tail of an extended scene
+            if subtitles[idx] is not None and not scene.get("no_vocal"):
                 block, rect = subtitles[idx]
-                enter = min(1.0, max(0.0, t_local / 0.6))
-                exit_ = min(1.0, (scene["end"] - t) / 0.7)
+                vstart = scene.get("vocal_start", scene["start"])
+                vend = scene.get("vocal_end")
+                show_at = max(0.0, vstart - scene["start"])   # into the scene
+                hide_at = (min(scene["end"], vend + 1.0)
+                           if vend is not None else scene["end"])
+                enter = min(1.0, max(0.0, (t_local - show_at) / 0.6))
+                exit_ = min(1.0, (hide_at - t) / 0.7)
                 alpha = ease_in_out(max(0.0, min(enter, exit_)))
                 if alpha > 0.01:
                     rise = (1.0 - ease_in_out(enter)) * 20

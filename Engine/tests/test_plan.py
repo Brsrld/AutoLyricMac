@@ -191,5 +191,35 @@ class TestScenePlan(unittest.TestCase):
         self.assertEqual(plan["lyric_scene_count"], 4)
 
 
+class TestVocalGating(unittest.TestCase):
+    """Lines the LRC placed over an instrumental section are suppressed."""
+
+    def _lines(self):
+        return [{"display_text": t, "translation": None, "start": st,
+                 "end": e, "confidence": 0.9, "uncertain": False}
+                for t, st, e in [("first line", 5.0, 9.0),
+                                 ("instrumental line", 12.0, 16.0),
+                                 ("last line", 20.0, 24.0)]]
+
+    def test_no_vocal_flag_and_window(self):
+        from plan.planner import build_scene_plan, _vocal_window
+        # actual singing only 5-9 and 20-24; 12-16 is instrumental
+        segs = [(5.0, 9.0), (20.0, 24.0)]
+        self.assertIsNone(_vocal_window(12.0, 16.0, segs))
+        plan = build_scene_plan(self._lines(), make_analysis(),
+                                "archiveCollage", 0.0, 30.0,
+                                vocal_segments=segs)
+        by_lyric = {s["lyric"]: s for s in plan["scenes"] if s["lyric"]}
+        self.assertTrue(by_lyric["instrumental line"]["no_vocal"])
+        self.assertFalse(by_lyric["first line"]["no_vocal"])
+        self.assertFalse(by_lyric["last line"]["no_vocal"])
+
+    def test_no_segments_means_all_shown(self):
+        from plan.planner import build_scene_plan
+        plan = build_scene_plan(self._lines(), make_analysis(),
+                                "archiveCollage", 0.0, 30.0)
+        self.assertFalse(any(s.get("no_vocal") for s in plan["scenes"]))
+
+
 if __name__ == "__main__":
     unittest.main()

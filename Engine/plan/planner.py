@@ -120,9 +120,25 @@ def recommend_style(emotion_totals, tempo_bpm):
         f"melancholic/longing emotions lead ({archive:.1f} vs {doodle:.1f})"
 
 
+def _vocal_window(start, end, vocal_segments, min_overlap=0.3):
+    """Overlap of [start, end] with actual singing regions, or None.
+
+    Returns (first_sing, last_sing) absolute times where the vocal is really
+    present inside the span — so a line the LRC placed over an instrumental
+    break resolves to None and its subtitle can be suppressed.
+    """
+    lo = hi = None
+    for a, b in vocal_segments:
+        o0, o1 = max(start, a), min(end, b)
+        if o1 - o0 >= min_overlap:
+            lo = o0 if lo is None else min(lo, o0)
+            hi = o1 if hi is None else max(hi, o1)
+    return (lo, hi) if lo is not None else None
+
+
 def build_scene_plan(lines, analysis, style, segment_start, segment_end,
                      semantics_fn=extract_semantics, title_hint="",
-                     extra_queries=()):
+                     extra_queries=(), vocal_segments=()):
     """Build the structured scene plan for a segment.
 
     `lines`: lyric dicts with absolute start/end (only timed lines are used):
@@ -224,10 +240,39 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
                    if subjects else
                    f"{dominant_emotion(emotion_totals)} passage — song-level imagery")
 
+        # when the vocal actually starts/stops (first/last sung word), so the
+        # subtitle tracks the singing instead of the padded scene bounds and
+        # never sits over an instrumental lead-in or tail
+        vocal_start = round(start - segment_start, 3)
+        vocal_end = round(end - segment_start, 3)
+        if ln and ln.get("words"):
+            wstarts = [w["start"] for w in ln["words"]
+                       if w.get("start") is not None]
+            wends = [w["end"] for w in ln["words"] if w.get("end") is not None]
+            if wstarts:
+                vocal_start = round(max(start, min(wstarts)) - segment_start, 3)
+            if wends:
+                vocal_end = round(min(end, max(wends)) - segment_start, 3)
+
+        # cross-check against real singing: a lyric line whose whole span is
+        # instrumental (LRC mistimed it) is flagged so no subtitle shows;
+        # otherwise tighten the subtitle window to where the vocal really is
+        no_vocal = False
+        if text and vocal_segments:
+            vw = _vocal_window(start, end, vocal_segments)
+            if vw is None:
+                no_vocal = True
+            else:
+                vocal_start = round(vw[0] - segment_start, 3)
+                vocal_end = round(vw[1] - segment_start, 3)
+
         scenes.append({
             "scene_index": i,
             "start": round(start - segment_start, 3),
             "end": round(end - segment_start, 3),
+            "vocal_start": vocal_start,
+            "vocal_end": vocal_end,
+            "no_vocal": no_vocal,
             "duration": round(end - start, 3),
             "target_duration": [lo, hi],
             "lyric": text or None,
