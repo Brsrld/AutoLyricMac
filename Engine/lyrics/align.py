@@ -275,7 +275,8 @@ LRC_FALLBACK_CONFIDENCE = 0.6
 ASR_TRUST_MIN = 0.4         # below this, ASR is noise — use LRC wholesale
 
 
-def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN):
+def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN,
+                 drift_tol=3.0):
     """Best-of-both alignment: precise ASR word timing + clean LRC skeleton.
 
     1. Match lyric lines against the ASR word stream (wide forward search),
@@ -298,17 +299,41 @@ def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN):
     if not lrc_spans:
         return aligned, matched_ratio, mean_conf
 
-    if matched_ratio < trust_min:
+    # per-line drift between a confidently-matched ASR line and its LRC slot
+    def _matched():
+        for line in aligned:
+            sp = lrc_spans.get(line["line_index"])
+            if (line["start"] is not None and line["confidence"] >= 0.45
+                    and sp and sp[0] is not None):
+                yield line, line["start"] - float(sp[0])
+
+    drifts = [d for _, d in _matched()]
+    need = max(2, int(0.25 * len(line_texts)))
+    if matched_ratio < trust_min or len(drifts) < need:
         return align_from_lrc(line_texts, lrc_spans)
 
-    # median drift between confidently-matched ASR lines and their LRC slot
-    drifts = []
-    for line in aligned:
-        if line["start"] is not None and line["confidence"] >= 0.45:
-            sp = lrc_spans.get(line["line_index"])
-            if sp and sp[0] is not None:
-                drifts.append(line["start"] - float(sp[0]))
-    drift = statistics.median(drifts) if drifts else 0.0
+    drift = statistics.median(drifts)
+    # MAD: if the ASR match times DISAGREE with the LRC structure (matches
+    # scattered — typical of false matches on foreign scripts), the ASR is
+    # noise even at a moderate match rate → trust the LRC wholesale.
+    mad = statistics.median([abs(d - drift) for d in drifts])
+    if mad > 4.0:
+        return align_from_lrc(line_texts, lrc_spans)
+
+    # drop individual ASR matches that disagree with the consensus drift —
+    # they are false matches; let the LRC time them instead.
+    kept = 0
+    for line, d in list(_matched()):
+        if abs(d - drift) > drift_tol:
+            line["start"] = line["end"] = None
+            line["confidence"] = 0.0
+            for w in line.get("words") or []:
+                w["start"] = w["end"] = None
+                w["confidence"] = 0.0
+        else:
+            kept += 1
+    if kept < need:
+        return align_from_lrc(line_texts, lrc_spans)
 
     shifted = {li: (sp[0] + drift,
                     (sp[1] + drift) if sp[1] is not None else None)
@@ -319,7 +344,7 @@ def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN):
     timed = [l for l in aligned if l["start"] is not None]
     mean_conf = (round(sum(l["confidence"] for l in timed) / len(timed), 4)
                  if timed else 0.0)
-    return aligned, matched_ratio, mean_conf
+    return aligned, round(kept / max(1, len(line_texts)), 4), mean_conf
 
 
 def _clamp_monotonic(aligned):

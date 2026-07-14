@@ -183,6 +183,28 @@ class TestHybridAlignment(unittest.TestCase):
         self.assertAlmostEqual(aligned[0]["start"], 5.0, places=2)  # clean LRC
         self.assertAlmostEqual(aligned[3]["start"], 11.0, places=2)
 
+    def test_scattered_asr_matches_fall_back_to_lrc(self):
+        """Moderate match rate but times disagree with LRC → trust LRC."""
+        from lyrics.align import align_hybrid, is_monotonic
+        texts = ["one two", "three four", "five six", "seven eight"]
+        spans = {0: (56.0, 61.0), 1: (61.0, 66.0),
+                 2: (66.0, 71.0), 3: (71.0, 76.0)}
+        # ASR "matches" scattered far from the LRC structure (false matches)
+        asr = [{"text": "one", "start": 56.2, "end": 56.6, "prob": 0.9},
+               {"text": "two", "start": 56.6, "end": 57.0, "prob": 0.9},
+               {"text": "three", "start": 24.0, "end": 24.4, "prob": 0.9},
+               {"text": "four", "start": 24.4, "end": 24.8, "prob": 0.9},
+               {"text": "five", "start": 30.0, "end": 30.4, "prob": 0.9},
+               {"text": "six", "start": 30.4, "end": 30.8, "prob": 0.9},
+               {"text": "seven", "start": 99.0, "end": 99.4, "prob": 0.9},
+               {"text": "eight", "start": 99.4, "end": 99.8, "prob": 0.9}]
+        aligned, _, _ = align_hybrid(texts, spans, asr, trust_min=0.3)
+        self.assertTrue(is_monotonic(aligned))
+        # clean LRC timeline, not the scattered ASR times
+        self.assertAlmostEqual(aligned[0]["start"], 56.0, places=1)
+        self.assertAlmostEqual(aligned[1]["start"], 61.0, places=1)
+        self.assertAlmostEqual(aligned[3]["start"], 71.0, places=1)
+
     def test_no_lrc_uses_pure_asr(self):
         from lyrics.align import align_hybrid
         texts = ["hold on tight"]
