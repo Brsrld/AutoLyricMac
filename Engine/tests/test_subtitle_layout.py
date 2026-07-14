@@ -87,5 +87,30 @@ class TestPlaceBlock(unittest.TestCase):
         self.assertTrue(SAFE_ZONE.contains_rect(rect))
 
 
+class TestFontShaping(unittest.TestCase):
+    """Arabic/Hebrew must get a glyph-capable font and be shaped."""
+
+    def test_script_detection(self):
+        from subtitles import fonts
+        self.assertTrue(fonts.has_arabic("مش هسمحلك"))
+        self.assertTrue(fonts.is_rtl("مش هسمحلك"))
+        self.assertFalse(fonts.has_arabic("hold on tight"))
+        self.assertFalse(fonts.is_rtl("bülbül bülbül"))
+
+    def test_arabic_gets_non_latin_font(self):
+        from subtitles import fonts
+        latin = "/System/Library/Fonts/Supplemental/AmericanTypewriter.ttc"
+        self.assertNotEqual(fonts.font_for("مش هسمحلك", latin), latin)
+        self.assertEqual(fonts.font_for("hold on", latin), latin)
+
+    def test_shape_reorders_arabic_and_passes_latin(self):
+        from subtitles import fonts
+        self.assertEqual(fonts.shape("hold on tight"), "hold on tight")
+        shaped = fonts.shape("مش هسمحلك")
+        self.assertTrue(shaped)                    # non-empty
+        # bidi puts it in visual order; reshaping changes the codepoints
+        self.assertNotEqual(shaped, "مش هسمحلك")
+
+
 if __name__ == "__main__":
     unittest.main()

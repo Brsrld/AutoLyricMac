@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from render.proto_common import (FPS, H, W, VideoWriter, ease_in_out,
                                  make_grain_frames, paper_canvas,
                                  paper_sticker, vignette_map)
+from subtitles import fonts
 from subtitles.layout import (SAFE_ZONE, Rect, block_size, place_block,
                               wrap_text)
 
@@ -67,21 +68,25 @@ def build_archive_subtitle(text, translation=None, seed=0, uncertain=False,
                            max_width=int(SAFE_ZONE.w * 0.92),
                            bg=(235, 224, 200), ink=INK, pad=(14, 6)):
     """RGBA block of stacked paper strips; returns (image, logical_size)."""
-    measure_en = _measurer(FONT_TYPEWRITER, EN_SIZE)
-    measure_tr = _measurer(FONT_TYPEWRITER, TR_SIZE)
+    # pick a glyph-capable font per line (Arabic/Hebrew have no typewriter
+    # glyphs) and shape complex scripts, since Pillow here lacks libraqm
+    font_en = fonts.font_for(text, FONT_TYPEWRITER)
+    font_tr = fonts.font_for(translation or "", FONT_TYPEWRITER)
+    measure_en = _measurer(font_en, EN_SIZE)
+    measure_tr = _measurer(font_tr, TR_SIZE)
 
     strips = []
     pad_w = 26 * 2  # paper_sticker horizontal padding
     for i, line in enumerate(wrap_text(text, max_width - pad_w, measure_en)):
         strips.append(paper_sticker(
-            line, FONT_TYPEWRITER, EN_SIZE, text_fill=ink,
+            fonts.shape(line), font_en, EN_SIZE, text_fill=ink,
             bg=bg, pad=pad, rotation=0.0,
             seed=seed * 31 + i, jitter=2))
     if translation:
         for i, line in enumerate(wrap_text(translation, max_width - pad_w,
                                            measure_tr)):
             strips.append(paper_sticker(
-                line, FONT_TYPEWRITER, TR_SIZE,
+                fonts.shape(line), font_tr, TR_SIZE,
                 text_fill=tuple(min(255, c + 20) for c in ink),
                 bg=bg, pad=(12, 5), rotation=0.0,
                 seed=seed * 47 + i + 100, jitter=2))
@@ -119,9 +124,11 @@ def build_doodle_words(words, seed=0, uncertain=False,
         text = word if isinstance(word, str) else word.get("text", "")
         if not text:
             continue
+        w_font = fonts.font_for(text, FONT_HAND)
         sticker = paper_sticker(
-            text, FONT_HAND, HAND_SIZE, text_fill=NAVY, bg=STICKER_WHITE,
-            pad=(9, 5), rotation=(-2.0, 1.5, -1.0, 2.0, 0.5)[(seed + wi) % 5],
+            fonts.shape(text), w_font, HAND_SIZE, text_fill=NAVY,
+            bg=STICKER_WHITE, pad=(9, 5),
+            rotation=(-2.0, 1.5, -1.0, 2.0, 0.5)[(seed + wi) % 5],
             seed=seed * 53 + wi, jitter=6)
         if x > 0 and x + sticker.width > max_width:
             x, y = 0, y + row_h - 14
@@ -143,11 +150,12 @@ def build_doodle_translation(text, seed=0, max_width=int(SAFE_ZONE.w * 0.86)):
     if not (text or "").strip():
         return None
     size = 44
-    measure = _measurer(FONT_HAND, size)
+    tr_font = fonts.font_for(text, FONT_HAND)
+    measure = _measurer(tr_font, size)
     strips = []
     for i, line in enumerate(wrap_text(text, max_width - 32, measure)):
         strips.append(paper_sticker(
-            line, FONT_HAND, size, text_fill=(58, 74, 120),
+            fonts.shape(line), tr_font, size, text_fill=(58, 74, 120),
             bg=(252, 250, 246), pad=(18, 8),
             rotation=(1.2, -0.8, 0.5)[(seed + i) % 3],
             seed=seed * 71 + i + 500, jitter=3))

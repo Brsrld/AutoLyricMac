@@ -232,6 +232,18 @@ class LyricsStore:
                     "uncertain": conf is not None and conf < UNCERTAIN_BELOW,
                     "words": words,
                 })
+            # immutable synced-LRC spans, re-parsed from the raw LRC so they
+            # survive alignment (which overwrites lines.start/end). Keyed by
+            # line_index, exactly matching how save_lyrics assigned them.
+            lrc_spans = {}
+            if lyr["synced"] and lyr["raw_lrc"]:
+                try:
+                    _, lrc_lines = parse_lrc(lyr["raw_lrc"])
+                    lrc_lines = [l for l in lrc_lines if l.text]
+                    spans = infer_line_ends(lrc_lines, lyr["duration"])
+                    lrc_spans = {i: (sp[0], sp[1]) for i, sp in enumerate(spans)}
+                except Exception:
+                    lrc_spans = {}
             mean_conf = lyr["mean_confidence"]
             return {
                 "job_id": job_id,
@@ -246,6 +258,7 @@ class LyricsStore:
                 "mean_confidence": mean_conf,
                 "suspect": mean_conf is not None and mean_conf < SUSPECT_BELOW,
                 "lines": lines,
+                "lrc_spans": lrc_spans,
             }
 
     # ------------------------------------------------------------------

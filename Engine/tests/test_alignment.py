@@ -117,5 +117,35 @@ class TestAlignLyrics(unittest.TestCase):
         self.assertIsNone(aligned[0]["start"])
 
 
+class TestLrcWholesaleAndMonotonic(unittest.TestCase):
+    """Weak/scrambled ASR must not corrupt a clean synced LRC."""
+
+    def test_is_monotonic_detects_backward_jump(self):
+        from lyrics.align import is_monotonic
+        good = [{"start": 1.0}, {"start": 2.0}, {"start": None},
+                {"start": 3.0}]
+        bad = [{"start": 56.0}, {"start": 24.0}, {"start": 30.0}]
+        self.assertTrue(is_monotonic(good))
+        self.assertFalse(is_monotonic(bad))
+
+    def test_align_from_lrc_is_monotonic_and_spreads_words(self):
+        from lyrics.align import align_from_lrc, is_monotonic
+        texts = ["first line here", "second", "third line"]
+        spans = {0: (10.0, 13.0), 1: (13.0, 15.0), 2: (15.0, 18.0)}
+        aligned, cov, conf = align_from_lrc(texts, spans)
+        self.assertEqual(cov, 1.0)
+        self.assertTrue(is_monotonic(aligned))
+        w = aligned[0]["words"]
+        self.assertEqual(len(w), 3)
+        self.assertLess(w[0]["start"], w[1]["start"])   # words spread in order
+        self.assertAlmostEqual(aligned[0]["start"], 10.0)
+
+    def test_line_without_span_stays_untimed(self):
+        from lyrics.align import align_from_lrc
+        aligned, cov, _ = align_from_lrc(["a b", "c d"], {0: (1.0, 2.0)})
+        self.assertIsNone(aligned[1]["start"])
+        self.assertEqual(cov, 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

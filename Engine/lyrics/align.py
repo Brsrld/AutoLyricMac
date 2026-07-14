@@ -272,6 +272,62 @@ def words_to_lines(words, gap=0.9, max_words=8):
 LRC_FALLBACK_CONFIDENCE = 0.6
 
 
+def is_monotonic(aligned, tol=0.05):
+    """True if timed line starts never move backward (a sane timeline).
+
+    A scrambled hybrid (a few wrong ASR matches mixed with clean LRC
+    timings) shows up here as backward jumps.
+    """
+    last = None
+    for line in aligned:
+        s = line.get("start")
+        if s is None:
+            continue
+        if last is not None and s < last - tol:
+            return False
+        last = s
+    return True
+
+
+def align_from_lrc(line_texts, seed_spans, confidence=0.6):
+    """Build the whole timeline straight from synced-LRC spans.
+
+    A provider's synced LRC is a monotonic, human-checked ground truth.
+    When ASR alignment is weak or scrambled we trust it wholesale instead
+    of a corrupted ASR/LRC mix: each line takes its LRC span, words spread
+    evenly. Lines without a span stay untimed. Returns
+    (aligned, coverage_ratio, mean_confidence).
+    """
+    aligned = []
+    timed = 0
+    for li, text in enumerate(line_texts):
+        raws = [w for w in text.split() if normalize_token(w)]
+        seed = seed_spans.get(li)
+        if seed and seed[0] is not None:
+            start = float(seed[0])
+            end = float(seed[1] if seed[1] is not None else start + 3.0)
+            end = max(end, start + 0.8)
+            words = []
+            n = max(1, len(raws))
+            step = (end - start) / n
+            for k, raw in enumerate(raws):
+                words.append({"text": raw,
+                              "start": round(start + k * step, 3),
+                              "end": round(start + (k + 1) * step, 3),
+                              "confidence": confidence})
+            aligned.append({"line_index": li, "start": round(start, 3),
+                            "end": round(end, 3), "confidence": confidence,
+                            "words": words})
+            timed += 1
+        else:
+            aligned.append({"line_index": li, "start": None, "end": None,
+                            "confidence": 0.0,
+                            "words": [{"text": r, "start": None, "end": None,
+                                       "confidence": 0.0} for r in raws]})
+    n = max(1, len(line_texts))
+    return aligned, round(timed / n, 4), round(confidence * timed / n, 4)
+
+
 def merge_lrc_fallback(aligned, seed_spans):
     """Hybrid alignment: where ASR failed, trust provider LRC timings.
 

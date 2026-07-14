@@ -15,3 +15,8 @@ mlx-whisper>=0.4
 # Automatic Turkish translation — local/offline Argos models (no LLM/API);
 # language-pair models (~200 MB each) download once on first use.
 argostranslate>=1.9
+# Right-to-left subtitle shaping (Arabic/Hebrew): this Pillow build has no
+# libraqm, so we reshape to positional forms + apply the bidi algorithm
+# ourselves before drawing. Pure-Python, tiny, fully offline.
+arabic-reshaper>=3.0
+python-bidi>=0.4
