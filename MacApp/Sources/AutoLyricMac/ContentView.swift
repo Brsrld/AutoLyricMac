@@ -1284,6 +1284,13 @@ struct ContentView: View {
                     .lineLimit(1)
                 Spacer()
             }
+            if let tr = scene.translation, !tr.isEmpty {
+                Text(tr)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.leading, 94)
+            }
             HStack(spacing: 8) {
                 Text("search: \(scene.queries.first ?? "—")")
                     .font(.caption2)
