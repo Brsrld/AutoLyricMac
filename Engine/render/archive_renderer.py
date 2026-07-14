@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from proto_common import (FPS, H, W, VideoWriter, drop_shadow, ease_in_out,
                           lerp, make_grain_frames, mono_archive, paper_canvas,
-                          vignette_map)
+                          shift_scene_times, vignette_map)
 from subtitles.layout import Rect, place_block
 from subtitles.render import build_archive_subtitle
 
@@ -363,7 +363,7 @@ def _dust_layer(shape, rng):
 # ---------------------------------------------------------------------------
 
 def render_archive(plan, audio_path, out_path, progress=None,
-                   motion_effects=False):
+                   motion_effects=False, sync_offset=0.0):
     global _V
     _V = VARIANTS.get(plan.get("style"), VARIANTS["archiveCollage"])
     """Render the full Archive Collage video for a media-annotated plan.
@@ -375,6 +375,7 @@ def render_archive(plan, audio_path, out_path, progress=None,
     scenes = plan["scenes"]
     seg_start = float(plan["segment_start"])
     duration = float(plan["segment_end"]) - seg_start
+    shift_scene_times(scenes, sync_offset, duration)
 
     layouts = [scene_layout(s, i) for i, s in enumerate(scenes)]
     def pool_for(i):

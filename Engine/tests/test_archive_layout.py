@@ -87,5 +87,23 @@ class TestSceneLayout(unittest.TestCase):
             self.assertLess(rect.x, SAFE_ZONE.right)
 
 
+class TestSyncOffset(unittest.TestCase):
+    """Lyrics↔audio sync nudge shifts scene times, stays in bounds."""
+
+    def test_shift_and_clamp(self):
+        from proto_common import shift_scene_times
+        scenes = [{"start": 0.0, "end": 5.0}, {"start": 5.0, "end": 10.0}]
+        shift_scene_times(scenes, 1.0, 10.0)
+        self.assertEqual(scenes[0]["start"], 0.0)      # head anchored
+        self.assertAlmostEqual(scenes[1]["start"], 6.0)
+        self.assertEqual(scenes[-1]["end"], 10.0)      # tail anchored
+
+    def test_zero_offset_is_noop(self):
+        from proto_common import shift_scene_times
+        scenes = [{"start": 1.0, "end": 4.0}]
+        shift_scene_times(scenes, 0.0, 10.0)
+        self.assertEqual(scenes[0]["start"], 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

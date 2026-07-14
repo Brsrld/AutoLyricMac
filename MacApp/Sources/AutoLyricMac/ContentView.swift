@@ -56,6 +56,7 @@ struct ContentView: View {
     @State private var planStyle: String = "automatic"
     @State private var artStyle: String = "storybook"
     @State private var motionEffects: Bool = false
+    @State private var syncOffset: Double = 0.0
     @State private var planJob: JobStatus?
     @State private var planTask: Task<Void, Never>?
     @State private var planError: String?
@@ -556,7 +557,8 @@ struct ContentView: View {
                 status = try await awaitJob(
                     engine.createRenderJob(sourceJobId: sourceId,
                                            style: resolvedStyle,
-                                           motionEffects: motionEffects)
+                                           motionEffects: motionEffects,
+                                           syncOffset: syncOffset)
                 ) { planJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
 
@@ -1160,6 +1162,27 @@ struct ContentView: View {
                 .help("Off by default: no brightness flicker, no beat throb, "
                       + "no doodle breathing. Turn on for a livelier, filmic "
                       + "look. Applies to the next render.")
+            HStack(spacing: 8) {
+                Text("Söz–ses eşitleme")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Stepper(value: $syncOffset, in: -10...10, step: 0.25) {
+                    Text(String(format: "%+.2f s", syncOffset))
+                        .font(.caption.monospaced())
+                        .frame(width: 64, alignment: .leading)
+                }
+                .fixedSize()
+                if syncOffset != 0 {
+                    Button("Sıfırla") { syncOffset = 0 }
+                        .font(.caption2)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Sözler geç çıkıyorsa eksiye, erken çıkıyorsa artıya al. "
+                     + "Render'a uygulanır.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if analysisJob?.state != "done" {
                 Text("Requires a selected segment (run Analyze first).")
                     .font(.caption)
@@ -1966,7 +1989,8 @@ struct ContentView: View {
         runPlanJob("Render (\(style))") {
             try await engine.createRenderJob(sourceJobId: source.jobId,
                                              style: style,
-                                             motionEffects: motionEffects)
+                                             motionEffects: motionEffects,
+                                             syncOffset: syncOffset)
         }
     }
 

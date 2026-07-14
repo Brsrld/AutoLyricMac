@@ -290,6 +290,7 @@ class Job:
         self.exclude_assets = []         # media job: [(provider, ref), ...]
         self.art_style = None            # plan/media job: AI-draw art style
         self.motion_effects = False      # render job: flicker + breathing
+        self.sync_offset = 0.0           # render job: lyrics↔audio nudge (s)
         self.publish_meta = {}           # publish job: title/desc/privacy
         self.state = "queued"          # queued|downloading|converting|analyzing|verifying|done|error|cancelled
         self.progress = 0.0            # 0..1
@@ -1359,12 +1360,14 @@ class Job:
                 words = self._words_by_line(float(plan["segment_start"]))
                 qa_frames = render_doodle(plan, words, source_audio, out_path,
                                           progress=report,
-                                          motion_effects=self.motion_effects)
+                                          motion_effects=self.motion_effects,
+                                          sync_offset=self.sync_offset)
             else:
                 from archive_renderer import render_archive
                 qa_frames = render_archive(plan, source_audio, out_path,
                                            progress=report,
-                                           motion_effects=self.motion_effects)
+                                           motion_effects=self.motion_effects,
+                                           sync_offset=self.sync_offset)
         except CancelledError:
             out_path.unlink(missing_ok=True)
             raise
@@ -1713,6 +1716,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     return
                 job = Job(kind="render", source_job_id=source_id, style=style)
                 job.motion_effects = bool(body.get("motion_effects", False))
+                try:
+                    job.sync_offset = max(-10.0, min(10.0,
+                                          float(body.get("sync_offset", 0.0))))
+                except (TypeError, ValueError):
+                    job.sync_offset = 0.0
             elif kind in ("plan", "media"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):

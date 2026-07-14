@@ -235,6 +235,24 @@ class VideoWriter:
             raise RuntimeError(f"ffmpeg exited with {rc}")
 
 
+def shift_scene_times(scenes, offset, duration):
+    """Shift all scene start/end by `offset` seconds (lyrics↔audio sync nudge).
+
+    Positive delays the visuals (use when subtitles run ahead of the vocal);
+    negative advances them. Times are clamped into [0, duration] and the
+    first scene is anchored to 0 so the head never falls through to a blank.
+    Mutates and returns `scenes`.
+    """
+    if not offset or not scenes:
+        return scenes
+    for s in scenes:
+        s["start"] = max(0.0, min(duration, s["start"] + offset))
+        s["end"] = max(s["start"] + 0.1, min(duration, s["end"] + offset))
+    scenes[0]["start"] = 0.0
+    scenes[-1]["end"] = duration
+    return scenes
+
+
 def find_job_audio():
     """First ingested audio file from the Step 2 pipeline (licensed source)."""
     for p in sorted((REPO_ROOT / "Cache" / "jobs").glob("*/audio.m4a")):

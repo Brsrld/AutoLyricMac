@@ -24,7 +24,7 @@ from doodle_library import build_doodle, is_ground_anchored, pick_doodle
 from media.crop import subject_crop
 from proto_common import (FPS, H, W, VideoWriter, apply_lut, cover_resize,
                           ease_in_out, make_grain_frames, posterize_levels,
-                          vignette_map, warm_memory_lut)
+                          shift_scene_times, vignette_map, warm_memory_lut)
 from subtitles.layout import SAFE_ZONE, Rect, place_block
 from subtitles.render import build_doodle_translation, build_doodle_words
 
@@ -174,7 +174,7 @@ def _bounce(t, pulse_beats, amp=9.0, decay=0.18):
 
 
 def render_doodle(plan, words_by_line, audio_path, out_path, progress=None,
-                  motion_effects=False):
+                  motion_effects=False, sync_offset=0.0):
     """Render the Doodle Memory video for a media-annotated plan.
 
     `words_by_line`: {line_index: [{"text","start","end"}]} with times
@@ -186,6 +186,14 @@ def render_doodle(plan, words_by_line, audio_path, out_path, progress=None,
     scenes = plan["scenes"]
     seg_start = float(plan["segment_start"])
     duration = float(plan["segment_end"]) - seg_start
+    shift_scene_times(scenes, sync_offset, duration)
+    if sync_offset:
+        # keep word-pop times in step with the shifted scenes
+        for words in words_by_line.values():
+            for w in words:
+                for k in ("start", "end"):
+                    if w.get(k) is not None:
+                        w[k] = max(0.0, min(duration, w[k] + sync_offset))
 
     lut = warm_memory_lut()
     # line-boil (hand-drawn wobble) only suits the ink storybook look; Ghibli,
