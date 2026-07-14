@@ -751,6 +751,34 @@ class Job:
         word_spans = {int(k): v
                       for k, v in (payload.get("lrc_word_spans") or {}).items()} \
             if payload["synced"] else {}
+        # A provider LRC can be timed to a different master than this audio
+        # (lyrics land over an instrumental section). Detect that global
+        # offset from the vocal-energy envelope — text-independent, so it
+        # works even on foreign songs ASR can't read — and shift the LRC to
+        # match the real vocals before aligning.
+        if lrc_spans:
+            try:
+                from lyrics.align import (estimate_lrc_offset,
+                                          vocal_energy_envelope)
+                env, hop = vocal_energy_envelope(align_audio, ffmpeg=FFMPEG)
+                off, best, zero = estimate_lrc_offset(env, hop, lrc_spans)
+                if abs(off) >= 0.3 and best >= 0.55 and best - zero >= 0.1:
+                    lrc_spans = {li: (s + off,
+                                      (e + off) if e is not None else None)
+                                 for li, (s, e) in lrc_spans.items()
+                                 if s is not None}
+                    word_spans = {li: [(t, ws + off) for t, ws in ws_list]
+                                  for li, ws_list in word_spans.items()}
+                    print(f"[engine] job {self.id} align: LRC vs audio "
+                          f"offset {off:+.2f}s (fit {best:.2f} vs {zero:.2f}) "
+                          f"— shifted LRC to match vocals", flush=True)
+                else:
+                    print(f"[engine] job {self.id} align: LRC offset check "
+                          f"{off:+.2f}s (fit {best:.2f} vs {zero:.2f}); "
+                          f"no shift", flush=True)
+            except Exception as exc:
+                print(f"[engine] job {self.id} align: offset check skipped "
+                      f"({exc})", flush=True)
         # precise ASR word timing where heard + clean LRC skeleton elsewhere,
         # offset-corrected and clamped monotonic (foreign/instrumental songs
         # fall back to the LRC timeline instead of scrambling it). Enhanced

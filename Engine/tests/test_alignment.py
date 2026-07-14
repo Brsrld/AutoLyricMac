@@ -238,5 +238,40 @@ class TestHybridAlignment(unittest.TestCase):
         self.assertAlmostEqual(aligned[0]["start"], 1.0, places=2)
 
 
+class TestLrcOffset(unittest.TestCase):
+    """Vocal-energy offset detection: line up LRC to the real vocals."""
+
+    def _energy(self, active_ranges, total_s=30.0, hop=0.5):
+        n = int(total_s / hop)
+        e = [0.02] * n  # quiet floor
+        for a, b in active_ranges:
+            for i in range(int(a / hop), int(b / hop)):
+                if 0 <= i < n:
+                    e[i] = 1.0
+        return e, hop
+
+    def test_recovers_known_offset(self):
+        from lyrics.align import estimate_lrc_offset
+        # vocals actually at 12-15 and 18-21
+        energy, hop = self._energy([(12, 15), (18, 21)])
+        # LRC says 10-13 and 16-19 -> it's 2s early; expect +2.0
+        spans = {0: (10.0, 13.0), 1: (16.0, 19.0)}
+        off, best, zero = estimate_lrc_offset(energy, hop, spans)
+        self.assertAlmostEqual(off, 2.0, delta=0.6)
+        self.assertGreater(best, zero)
+
+    def test_already_aligned_returns_zero(self):
+        from lyrics.align import estimate_lrc_offset
+        energy, hop = self._energy([(12, 15), (18, 21)])
+        spans = {0: (12.0, 15.0), 1: (18.0, 21.0)}
+        off, best, zero = estimate_lrc_offset(energy, hop, spans)
+        self.assertAlmostEqual(off, 0.0, delta=0.5)
+
+    def test_empty_energy_is_safe(self):
+        from lyrics.align import estimate_lrc_offset
+        off, best, zero = estimate_lrc_offset([], 0.5, {0: (1.0, 2.0)})
+        self.assertEqual((off, best, zero), (0.0, 0.0, 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()

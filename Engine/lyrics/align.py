@@ -72,6 +72,61 @@ def transcribe_words(audio_path, model=DEFAULT_MODEL, language=None,
     return words, result.get("language") or language or "en"
 
 
+def vocal_energy_envelope(audio_path, ffmpeg="ffmpeg", hop_s=0.5):
+    """RMS energy of the (separated vocal) audio, one value per `hop_s`."""
+    import numpy as np
+    a = _decode_pcm(audio_path, ffmpeg)
+    sr = 16000
+    hop = int(hop_s * sr)
+    n = max(0, (len(a) - 1) // hop)
+    env = [float(np.sqrt(np.mean(a[i * hop:(i + 1) * hop] ** 2)))
+           for i in range(n)]
+    return env, hop_s
+
+
+def estimate_lrc_offset(energy, hop_s, lrc_spans, search=8.0, step=0.1,
+                        thr_frac=0.15):
+    """Global time offset (s) that best lines the synced LRC up to the audio.
+
+    Text-independent: it slides the LRC's line-activity pattern against the
+    vocal ENERGY envelope and picks the shift where the most LRC-"singing"
+    frames actually carry vocal energy. Works for any language (no ASR text
+    needed) — the case that matters when a provider LRC is timed to a
+    different master than the downloaded audio (lyrics over an instrumental).
+
+    Returns (offset, best_score, zero_score): apply the offset only when
+    best_score is high AND clearly beats zero_score (the no-shift baseline).
+    """
+    import numpy as np
+    e = np.asarray(list(energy), dtype=float)
+    spans = [(float(s), float(en)) for s, en in (lrc_spans or {}).values()
+             if s is not None and en is not None]
+    if e.size == 0 or not spans or e.max() <= 0:
+        return 0.0, 0.0, 0.0
+    voc = (e > e.max() * thr_frac).astype(float)
+    N = len(voc)
+
+    def score(shift):
+        act = np.zeros(N)
+        for s, en in spans:
+            a = max(0, min(N, int(round((s + shift) / hop_s))))
+            b = max(0, min(N, int(round((en + shift) / hop_s))))
+            if b > a:
+                act[a:b] = 1.0
+        tot = act.sum()
+        return float((act * voc).sum() / tot) if tot >= 1 else 0.0
+
+    zero = score(0.0)
+    steps = int(round(search / step))
+    best = (zero, 0.0)
+    for k in range(-steps, steps + 1):
+        sh = round(k * step, 2)
+        sc = score(sh)
+        if sc > best[0]:
+            best = (sc, sh)
+    return best[1], round(best[0], 3), round(zero, 3)
+
+
 # ---------------------------------------------------------------------------
 # Pure alignment mapping
 # ---------------------------------------------------------------------------
