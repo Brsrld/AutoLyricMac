@@ -236,14 +236,21 @@ class LyricsStore:
             # survive alignment (which overwrites lines.start/end). Keyed by
             # line_index, exactly matching how save_lyrics assigned them.
             lrc_spans = {}
+            lrc_word_spans = {}
             if lyr["synced"] and lyr["raw_lrc"]:
                 try:
                     _, lrc_lines = parse_lrc(lyr["raw_lrc"])
                     lrc_lines = [l for l in lrc_lines if l.text]
                     spans = infer_line_ends(lrc_lines, lyr["duration"])
                     lrc_spans = {i: (sp[0], sp[1]) for i, sp in enumerate(spans)}
+                    # enhanced LRC: per-word timings, so words pop exactly on
+                    # the beat instead of being spread evenly across the line
+                    for i, ln in enumerate(lrc_lines):
+                        if ln.words:
+                            lrc_word_spans[i] = [(w.text, w.start)
+                                                 for w in ln.words]
                 except Exception:
-                    lrc_spans = {}
+                    lrc_spans, lrc_word_spans = {}, {}
             mean_conf = lyr["mean_confidence"]
             return {
                 "job_id": job_id,
@@ -259,6 +266,7 @@ class LyricsStore:
                 "suspect": mean_conf is not None and mean_conf < SUSPECT_BELOW,
                 "lines": lines,
                 "lrc_spans": lrc_spans,
+                "lrc_word_spans": lrc_word_spans,
             }
 
     # ------------------------------------------------------------------

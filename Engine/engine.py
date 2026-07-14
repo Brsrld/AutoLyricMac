@@ -745,11 +745,15 @@ class Job:
         # line timings — a prior align may have overwritten those).
         lrc_spans = {int(k): v for k, v in (payload.get("lrc_spans") or {}).items()} \
             if payload["synced"] else {}
+        word_spans = {int(k): v
+                      for k, v in (payload.get("lrc_word_spans") or {}).items()} \
+            if payload["synced"] else {}
         # precise ASR word timing where heard + clean LRC skeleton elsewhere,
         # offset-corrected and clamped monotonic (foreign/instrumental songs
-        # fall back to the LRC timeline instead of scrambling it)
+        # fall back to the LRC timeline instead of scrambling it). Enhanced
+        # LRCs carry per-word timings — used directly so words pop on beat.
         aligned, matched_ratio, mean_confidence = align_hybrid(
-            line_texts, lrc_spans, asr_words)
+            line_texts, lrc_spans, asr_words, word_spans=word_spans)
         print(f"[engine] job {self.id} align: hybrid — "
               f"{matched_ratio:.0%} of lines matched to ASR word timing"
               f"{', LRC skeleton' if lrc_spans else ''}", flush=True)

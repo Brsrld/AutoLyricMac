@@ -276,7 +276,7 @@ ASR_TRUST_MIN = 0.4         # below this, ASR is noise — use LRC wholesale
 
 
 def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN,
-                 drift_tol=3.0):
+                 drift_tol=3.0, word_spans=None):
     """Best-of-both alignment: precise ASR word timing + clean LRC skeleton.
 
     1. Match lyric lines against the ASR word stream (wide forward search),
@@ -310,7 +310,7 @@ def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN,
     drifts = [d for _, d in _matched()]
     need = max(2, int(0.25 * len(line_texts)))
     if matched_ratio < trust_min or len(drifts) < need:
-        return align_from_lrc(line_texts, lrc_spans)
+        return align_from_lrc(line_texts, lrc_spans, word_spans)
 
     drift = statistics.median(drifts)
     # MAD: if the ASR match times DISAGREE with the LRC structure (matches
@@ -318,7 +318,7 @@ def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN,
     # noise even at a moderate match rate → trust the LRC wholesale.
     mad = statistics.median([abs(d - drift) for d in drifts])
     if mad > 4.0:
-        return align_from_lrc(line_texts, lrc_spans)
+        return align_from_lrc(line_texts, lrc_spans, word_spans)
 
     # drop individual ASR matches that disagree with the consensus drift —
     # they are false matches; let the LRC time them instead.
@@ -333,7 +333,7 @@ def align_hybrid(line_texts, lrc_spans, asr_words, trust_min=ASR_TRUST_MIN,
         else:
             kept += 1
     if kept < need:
-        return align_from_lrc(line_texts, lrc_spans)
+        return align_from_lrc(line_texts, lrc_spans, word_spans)
 
     shifted = {li: (sp[0] + drift,
                     (sp[1] + drift) if sp[1] is not None else None)
@@ -382,15 +382,41 @@ def is_monotonic(aligned, tol=0.05):
     return True
 
 
-def align_from_lrc(line_texts, seed_spans, confidence=0.6):
+def _lrc_word_times(raws, lrc_words, start, end, confidence):
+    """Per-word timing for a line.
+
+    Prefers the enhanced-LRC per-word timestamps when the count matches the
+    (possibly corrected) line words — so words pop exactly when sung. Falls
+    back to spreading words evenly across the line span otherwise.
+    """
+    if lrc_words and len(lrc_words) == len(raws):
+        times = [float(t) for _, t in lrc_words]
+        words = []
+        for k, raw in enumerate(raws):
+            ws = times[k]
+            we = times[k + 1] if k + 1 < len(times) else end
+            words.append({"text": raw, "start": round(ws, 3),
+                          "end": round(max(we, ws + 0.12), 3),
+                          "confidence": confidence})
+        return words
+    n = max(1, len(raws))
+    step = (end - start) / n
+    return [{"text": r, "start": round(start + k * step, 3),
+             "end": round(start + (k + 1) * step, 3),
+             "confidence": confidence} for k, r in enumerate(raws)]
+
+
+def align_from_lrc(line_texts, seed_spans, word_spans=None, confidence=0.6):
     """Build the whole timeline straight from synced-LRC spans.
 
     A provider's synced LRC is a monotonic, human-checked ground truth.
     When ASR alignment is weak or scrambled we trust it wholesale instead
-    of a corrupted ASR/LRC mix: each line takes its LRC span, words spread
-    evenly. Lines without a span stay untimed. Returns
+    of a corrupted ASR/LRC mix: each line takes its LRC span, and its words
+    take the enhanced-LRC per-word timings when present (else even spread).
+    Lines without a span stay untimed. Returns
     (aligned, coverage_ratio, mean_confidence).
     """
+    word_spans = word_spans or {}
     aligned = []
     timed = 0
     for li, text in enumerate(line_texts):
@@ -400,14 +426,8 @@ def align_from_lrc(line_texts, seed_spans, confidence=0.6):
             start = float(seed[0])
             end = float(seed[1] if seed[1] is not None else start + 3.0)
             end = max(end, start + 0.8)
-            words = []
-            n = max(1, len(raws))
-            step = (end - start) / n
-            for k, raw in enumerate(raws):
-                words.append({"text": raw,
-                              "start": round(start + k * step, 3),
-                              "end": round(start + (k + 1) * step, 3),
-                              "confidence": confidence})
+            words = _lrc_word_times(raws, word_spans.get(li), start, end,
+                                    confidence)
             aligned.append({"line_index": li, "start": round(start, 3),
                             "end": round(end, 3), "confidence": confidence,
                             "words": words})

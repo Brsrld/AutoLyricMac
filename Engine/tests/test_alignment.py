@@ -140,6 +140,28 @@ class TestLrcWholesaleAndMonotonic(unittest.TestCase):
         self.assertLess(w[0]["start"], w[1]["start"])   # words spread in order
         self.assertAlmostEqual(aligned[0]["start"], 10.0)
 
+    def test_enhanced_lrc_word_timings_used(self):
+        """Per-word LRC timestamps drive word timing, not even spread."""
+        from lyrics.align import align_from_lrc
+        texts = ["one two three"]
+        spans = {0: (10.0, 16.0)}
+        word_spans = {0: [("one", 10.0), ("two", 12.5), ("three", 15.0)]}
+        aligned, _, _ = align_from_lrc(texts, spans, word_spans)
+        w = aligned[0]["words"]
+        self.assertAlmostEqual(w[0]["start"], 10.0, places=2)
+        self.assertAlmostEqual(w[1]["start"], 12.5, places=2)  # NOT 12.0 (even)
+        self.assertAlmostEqual(w[2]["start"], 15.0, places=2)
+
+    def test_word_span_count_mismatch_falls_back_to_even(self):
+        from lyrics.align import align_from_lrc
+        texts = ["one two three"]
+        spans = {0: (10.0, 16.0)}
+        word_spans = {0: [("one", 10.0), ("two", 12.5)]}   # only 2 vs 3 words
+        aligned, _, _ = align_from_lrc(texts, spans, word_spans)
+        w = aligned[0]["words"]
+        self.assertAlmostEqual(w[0]["start"], 10.0, places=2)
+        self.assertAlmostEqual(w[1]["start"], 12.0, places=2)  # even spread
+
     def test_line_without_span_stays_untimed(self):
         from lyrics.align import align_from_lrc
         aligned, cov, _ = align_from_lrc(["a b", "c d"], {0: (1.0, 2.0)})
