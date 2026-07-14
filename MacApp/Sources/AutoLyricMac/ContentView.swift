@@ -773,6 +773,10 @@ struct ContentView: View {
                 .disabled(engine.status != .connected || lyricsJobRunning)
                 Button("Align Words") { startAlign() }
                     .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
+                Button("Türkçe'ye Çevir") { startTranslate() }
+                    .disabled(engine.status != .connected || lyricsJobRunning || lyrics == nil)
+                    .help("Sözleri Türkçe'ye çevirir (Claude; yoksa Argos). "
+                          + "Türkçe şarkılar atlanır, elle girdiğin çeviriler korunur.")
                 Button("Türkçe Çeviriler…") {
                     manualTranslationsDraft = ""
                     showManualTranslations = true
@@ -809,7 +813,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Enter Lyrics Manually")
                 .font(.headline)
-            Text("Paste the lyrics, one line per row (or .lrc content with timestamps). Word timing comes from Align Words afterwards; Turkish translations are added automatically.")
+            Text("Paste the lyrics, one line per row (or .lrc content with timestamps). Word timing comes from Align Words afterwards. Use “Türkçe'ye Çevir” for a Turkish translation when you want one.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextEditor(text: $manualLyricsDraft)
@@ -1805,6 +1809,13 @@ struct ContentView: View {
         guard let source = activeJob, source.state == "done" else { return }
         runLyricsJob("Alignment",
                      create: { try await engine.createAlignJob(sourceJobId: source.jobId) },
+                     onDone: { _ in await refreshLyrics() })
+    }
+
+    private func startTranslate() {
+        guard let source = activeJob, source.state == "done" else { return }
+        runLyricsJob("Turkish translation",
+                     create: { try await engine.createTranslateJob(sourceJobId: source.jobId) },
                      onDone: { _ in await refreshLyrics() })
     }
 

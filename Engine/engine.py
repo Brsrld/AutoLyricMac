@@ -335,6 +335,8 @@ class Job:
                 self._run_lyrics()
             elif self.kind == "align":
                 self._run_align()
+            elif self.kind == "translate":
+                self._run_translate()
             elif self.kind == "subtitle_preview":
                 self._run_subtitle_preview()
             elif self.kind == "plan":
@@ -777,6 +779,110 @@ class Job:
                      "asr_word_count": len(asr_words),
                      "language": source_lang,
                  })
+
+    def _run_translate(self):
+        """On-demand Turkish translation of the stored lyrics.
+
+        Not automatic (foreign songs get no silent translation) — the user
+        triggers this. Prefers Claude for poetic quality (cached, so a
+        re-run is free), falls back to the offline Argos models. Turkish
+        songs are left untouched; user-entered translations are preserved
+        unless `force` is set.
+        """
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lyrics.store import LyricsStore
+        from lyrics.translate import looks_turkish
+
+        store = LyricsStore(LYRICS_DB_PATH)
+        payload = store.get_lyrics(self.source_job_id)
+        if payload is None:
+            self.fail("not_found", "Fetch lyrics before translating.")
+            return
+        lines = payload["lines"]
+        texts = [ln["display_text"] for ln in lines]
+        if looks_turkish(texts):
+            self.set(state="done", progress=1.0,
+                     message="Bu şarkı zaten Türkçe — çeviriye gerek yok.",
+                     result={"translated": 0, "already_turkish": True})
+            return
+        todo = [(ln["line_index"], ln["display_text"]) for ln in lines
+                if ln["display_text"].strip()
+                and (self.regenerate
+                     or not (ln.get("translation") or "").strip())]
+        if not todo:
+            self.set(state="done", progress=1.0,
+                     message="Tüm satırların Türkçe çevirisi zaten var.",
+                     result={"translated": 0})
+            return
+
+        self.set(state="analyzing", progress=0.2,
+                 message=f"{len(todo)} satır Türkçe'ye çevriliyor…")
+        indices = [li for li, _ in todo]
+        src_texts = [t for _, t in todo]
+        translated = 0
+
+        # 1) Claude — natural/poetic, cached so a repeat costs nothing
+        key = None
+        try:
+            from publish.youtube import Keychain
+            key = Keychain().get("anthropic_api_key")
+        except Exception:
+            pass
+        if key:
+            try:
+                import llm_cache
+                from lyrics.translate import claude_translate_lines
+                ck = llm_cache.key_for("tr", *src_texts)
+                results = llm_cache.get_json(ck)
+                cached = results is not None
+                if results is None:
+                    results = claude_translate_lines(src_texts, key)
+                    llm_cache.put_json(ck, results)
+                self._check_cancel()
+                for li, tr in zip(indices, results):
+                    tr = (tr or "").strip()
+                    if tr:
+                        store.update_line(self.source_job_id, li,
+                                          translation=tr)
+                        translated += 1
+                print(f"[engine] job {self.id} translate: Claude "
+                      f"{translated} line(s)"
+                      f"{' (cache, ücretsiz)' if cached else ''}", flush=True)
+            except Exception as exc:
+                print(f"[engine] job {self.id} translate: Claude failed "
+                      f"({exc}); trying Argos", flush=True)
+                translated = 0
+
+        # 2) offline Argos fallback
+        if translated == 0:
+            self.set(progress=0.5,
+                     message="Yerel çeviri modeliyle çevriliyor (Argos)…")
+            from lyrics.translate import (ensure_argos_pair,
+                                          fill_missing_translations)
+            src = ("ar" if any("؀" <= c <= "ۿ"
+                               for c in " ".join(src_texts)) else "en")
+            log = lambda m: print(f"[engine] job {self.id} translate: {m}",
+                                  flush=True)
+            try:
+                ensure_argos_pair(src, "tr", log=log)
+            except Exception:
+                pass
+            translated, _ = fill_missing_translations(
+                store, self.source_job_id, src, log=log)
+
+        if translated == 0:
+            self.fail("translate_failed",
+                      "Çeviri yapılamadı. Anthropic anahtarı ekleyebilir "
+                      "veya çevirileri elle girebilirsin.")
+            return
+        refreshed = store.get_lyrics(self.source_job_id)
+        have = sum(1 for ln in refreshed["lines"]
+                   if (ln.get("translation") or "").strip())
+        self.set(state="done", progress=1.0,
+                 message=f"{translated} satır Türkçe'ye çevrildi "
+                         f"({have}/{len(refreshed['lines'])} satırda çeviri).",
+                 result={"translated": translated,
+                         "total": len(refreshed["lines"])})
 
     def _run_subtitle_preview(self):
         """Render a subtitle-only preview MP4 for the chosen style/segment."""
@@ -1654,13 +1760,16 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                              str(e.get("provider_ref", "")))
                             for e in raw_exclude if isinstance(e, dict)
                             and e.get("provider") and e.get("provider_ref")]
-            elif kind in ("lyrics", "align", "subtitle_preview"):
+            elif kind in ("lyrics", "align", "translate", "subtitle_preview"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",
                                           "message": "A valid 'source_job_id' is required."})
                     return
-                if kind == "lyrics":
+                if kind == "translate":
+                    job = Job(kind="translate", source_job_id=source_id)
+                    job.regenerate = bool(body.get("force"))  # retranslate all
+                elif kind == "lyrics":
                     title = str(body.get("title") or "").strip()
                     if not title:
                         self._send_json(400, {"error_code": "invalid_request",

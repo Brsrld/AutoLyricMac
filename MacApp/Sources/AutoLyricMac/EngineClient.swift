@@ -364,6 +364,19 @@ final class EngineClient: ObservableObject {
         return created.jobId
     }
 
+    /// On-demand Turkish translation of the stored lyrics (Claude, Argos
+    /// fallback). `force` re-translates lines that already have a translation.
+    func createTranslateJob(sourceJobId: String,
+                            force: Bool = false) async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "translate",
+                                                     "source_job_id": sourceJobId,
+                                                     "force": force],
+                                              timeout: 15)
+        return created.jobId
+    }
+
     /// Render a subtitle preview for a style over the selected segment.
     func createSubtitlePreviewJob(sourceJobId: String, style: String,
                                   segmentStart: Double, targetSeconds: Int) async throws -> String {
