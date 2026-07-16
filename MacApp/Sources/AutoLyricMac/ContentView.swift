@@ -56,6 +56,7 @@ struct ContentView: View {
     @State private var planStyle: String = "automatic"
     @State private var artStyle: String = "storybook"
     @State private var aiImages: Bool = false
+    @State private var instrumentalMode: Bool = false
     @State private var motionEffects: Bool = false
     @State private var syncOffset: Double = 0.0
     @State private var planJob: JobStatus?
@@ -1103,8 +1104,18 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
                 .help("Guides image search for every scene; rebuild the plan after changing it")
 
-            if lyrics?.aligned != true {
-                Text("Önce sözleri getirip Align Words'ü çalıştır — plan hizalanmış sözlerden kurulur.")
+            Toggle("Sadece melodi (enstrümantal) — temadan resim çizsin, altyazı yok",
+                   isOn: $instrumentalMode)
+                .toggleStyle(.checkbox)
+                .help("Sözü olmayan parçalarda kullanılır. Yukarıdaki temayı "
+                      + "girip stil seç; sözler yerine tema baştan sona AI ile "
+                      + "sahne sahne çizilir. Fetch/Align gerekmez.")
+            if instrumentalMode
+                && planTheme.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text("Enstrümantal modda görseller için bir tema girmelisin.")
+                    .font(.caption).foregroundStyle(.orange)
+            } else if !instrumentalMode && lyrics?.aligned != true {
+                Text("Önce sözleri getirip Align Words'ü çalıştır — ya da üstteki \"Sadece melodi\" kutusunu işaretle.")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -1122,15 +1133,19 @@ struct ContentView: View {
                 .labelsHidden()
                 .fixedSize()
                 Button("Build Scene Plan") { startPlan() }
-                    .disabled(lyrics?.aligned != true)
+                    .disabled(instrumentalMode
+                              ? planTheme.trimmingCharacters(in: .whitespaces).isEmpty
+                              : lyrics?.aligned != true)
                     .disabled(engine.status != .connected || planJobRunning
                               || analysisJob?.state != "done")
                 Button("Fetch Licensed Media") { startMediaFetch() }
                     .disabled(engine.status != .connected || planJobRunning
-                              || plan == nil || !anyProviderKey)
+                              || plan == nil
+                              || !(anyProviderKey || instrumentalMode || aiImages))
                 Button("Regenerate Media") { startMediaFetch(regenerate: true) }
                     .disabled(engine.status != .connected || planJobRunning
-                              || !planHasMedia || !anyProviderKey)
+                              || !planHasMedia
+                              || !(anyProviderKey || instrumentalMode || aiImages))
                     .help("Fetch fresh media for every scene (previous picks are avoided)")
                 Button("Render Video") { startRender() }
                     .buttonStyle(.borderedProminent)
@@ -2014,7 +2029,8 @@ struct ContentView: View {
                                            segmentStart: segmentStart,
                                            targetSeconds: durationSeconds,
                                            theme: theme,
-                                           artStyle: artStyle)
+                                           artStyle: artStyle,
+                                           instrumental: instrumentalMode)
         }
     }
 

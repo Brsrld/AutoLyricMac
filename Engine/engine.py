@@ -360,6 +360,7 @@ class Job:
         self.exclude_assets = []         # media job: [(provider, ref), ...]
         self.art_style = None            # plan/media job: AI-draw art style
         self.ai_images = False           # media job: AI-draw collage images
+        self.instrumental = False        # plan job: no lyrics, draw from theme
         self.motion_effects = False      # render job: flicker + breathing
         self.sync_offset = 0.0           # render job: lyrics↔audio nudge (s)
         self.publish_meta = {}           # publish job: title/desc/privacy
@@ -1168,7 +1169,16 @@ class Job:
         if source_audio is None:
             return
         payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(self.source_job_id)
-        if payload is None or not payload.get("aligned"):
+        # Instrumental mode: no lyrics — the whole segment is drawn from the
+        # theme (theme-driven ambient scenes, no subtitles).
+        if self.instrumental:
+            if not (self.publish_meta or {}).get("theme", "").strip():
+                self.fail("invalid_request",
+                          "Enstrümantal modda görsellerin çizileceği bir tema "
+                          "girmelisin.")
+                return
+            payload = None
+        elif payload is None or not payload.get("aligned"):
             self.fail("not_found", "Fetch and align lyrics before planning scenes.")
             return
 
@@ -1190,8 +1200,8 @@ class Job:
         from projects import ProjectStore as _PS
         project = _PS(PROJECTS_DB_PATH).get_project(self.source_job_id) or {}
         title_hint = " ".join(filter(None, [
-            project.get("title") or payload.get("title"),
-            payload.get("artist")]))
+            project.get("title") or (payload or {}).get("title"),
+            (payload or {}).get("artist")]))
         theme = self.publish_meta.get("theme", "")
         theme_queries = []
         if theme:
@@ -1238,7 +1248,7 @@ class Job:
         try:
             from publish.youtube import Keychain
             api_key = Keychain().get("anthropic_api_key")
-            if api_key:
+            if api_key and payload:
                 from plan.semantic import claude_semantics, extract_semantics
                 import llm_cache
                 texts = sorted({ln["display_text"] for ln in payload["lines"]
@@ -1267,12 +1277,14 @@ class Job:
                               json.loads(vseg_path.read_text(encoding="utf-8"))]
         except Exception:
             vocal_segs = []
-        plan = build_scene_plan(payload["lines"], analysis, self.style,
-                                seg_start, seg_end, title_hint=title_hint,
+        plan = build_scene_plan((payload or {}).get("lines", []), analysis,
+                                self.style, seg_start, seg_end,
+                                title_hint=title_hint,
                                 extra_queries=theme_queries,
                                 vocal_segments=vocal_segs, **kwargs)
         plan["source_job_id"] = self.source_job_id
         plan["art_style"] = self.art_style or "storybook"
+        plan["instrumental"] = bool(self.instrumental)
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
         from projects import ProjectStore
@@ -1344,7 +1356,9 @@ class Job:
         # photos UNLESS the user asked to draw the background images with AI
         # (ai_images) — then they're generated in the chosen art style too.
         is_doodle = plan.get("style") in FULL_AI_STYLES
-        want_ai = is_doodle or self.ai_images
+        # instrumental plans are drawn from the theme by default (user asked
+        # for images to be *drawn* for melody-only tracks)
+        want_ai = is_doodle or self.ai_images or plan.get("instrumental")
         # a style switch away from AI can leave drawn images in the plan;
         # photo-mode scenes must go back to stock search
         if not want_ai:
@@ -1967,6 +1981,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     job = Job(kind="plan", source_job_id=source_id, style=style,
                               target_seconds=target, segment_start=seg_start)
                     job.art_style = _clean_art_style(body.get("art_style"))
+                    job.instrumental = bool(body.get("instrumental"))
                     job.publish_meta = {
                         "theme": str(body.get("theme") or "").strip()[:300]}
                 else:
