@@ -67,6 +67,51 @@ def _clean_art_style(value):
     return v if v in ART_STYLES else None
 
 
+def _claude_caption(title, artist, lines, theme, api_key):
+    """Reach-optimized {title, caption, hashtags} for a lyric Reel/Short."""
+    import json as _json
+    import urllib.request as _rq
+
+    ctx = f"Song: {title or '(unknown)'}"
+    if artist:
+        ctx += f" — {artist}"
+    if lines:
+        ctx += "\nLyrics (excerpt):\n" + "\n".join(lines)
+    if theme:
+        ctx += f"\nTheme/mood: {theme}"
+    prompt = (
+        "You are a viral short-form music strategist. For an Instagram "
+        "Reels / YouTube Shorts LYRIC video of the song below, write output "
+        "that maximizes reach on the Explore / Keşfet page.\n\n" + ctx +
+        "\n\nReturn ONLY a JSON object:\n"
+        '{"title": "<catchy title <=80 chars, include song & artist>", '
+        '"caption": "<2-4 line Turkish caption, warm and human, 1-3 emojis, '
+        'invites saves/comments; do NOT put hashtags here>", '
+        '"hashtags": ["<18-25 hashtags mixing Turkish discovery tags '
+        "(#keşfet #keşfetteyiz #reels #şarkısözleri) and English "
+        "(#lyrics #music #fyp #shorts #lyricvideo) plus song/artist/genre/"
+        'mood specific ones; each starts with # and has no spaces>"]}')
+    body = _json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 1200,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+    req = _rq.Request("https://api.anthropic.com/v1/messages", data=body,
+                      headers={"x-api-key": api_key,
+                               "anthropic-version": "2023-06-01",
+                               "content-type": "application/json"})
+    with _rq.urlopen(req, timeout=60) as resp:
+        payload = _json.loads(resp.read().decode())
+    text = payload["content"][0]["text"].strip()
+    obj = _json.loads(text[text.find("{"):text.rfind("}") + 1])
+    tags = [str(t).strip() for t in (obj.get("hashtags") or [])]
+    tags = [t if t.startswith("#") else "#" + t.lstrip("#")
+            for t in tags if t.strip("#")]
+    return {"title": str(obj.get("title") or "").strip(),
+            "caption": str(obj.get("caption") or "").strip(),
+            "hashtags": tags}
+
+
 def is_drawn_media(media):
     """True when a scene's media is an AI-drawn Doodle illustration.
 
@@ -341,6 +386,8 @@ class Job:
                 self._run_align()
             elif self.kind == "translate":
                 self._run_translate()
+            elif self.kind == "caption":
+                self._run_caption()
             elif self.kind == "subtitle_preview":
                 self._run_subtitle_preview()
             elif self.kind == "plan":
@@ -929,6 +976,76 @@ class Job:
                          f"({have}/{len(refreshed['lines'])} satırda çeviri).",
                  result={"translated": translated,
                          "total": len(refreshed["lines"])})
+
+    def _run_caption(self):
+        """Generate a reach-optimized title, caption and hashtags (Claude).
+
+        Feeds the song's title/artist, a few lyric lines and the optional
+        theme to Claude and asks for a Turkish Reels/Shorts caption plus a
+        mix of Turkish (Keşfet) and English (Explore/fyp) discovery
+        hashtags. Cached, so re-running is free. Falls back to a simple
+        deterministic caption when no Anthropic key is set.
+        """
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lyrics.store import LyricsStore
+        from projects import ProjectStore
+
+        payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(self.source_job_id)
+        project = ProjectStore(PROJECTS_DB_PATH).get_project(
+            self.source_job_id) or {}
+        title = (project.get("title") or (payload or {}).get("title")
+                 or "").strip()
+        artist = ((payload or {}).get("artist")
+                  or project.get("uploader") or "").strip()
+        lines = [ln["display_text"] for ln in (payload or {}).get("lines", [])
+                 if ln["display_text"].strip()][:12]
+        theme = (self.publish_meta or {}).get("theme", "")
+        if not title and not lines:
+            self.fail("not_found", "Fetch lyrics before generating a caption.")
+            return
+
+        self.set(state="analyzing", progress=0.3,
+                 message="Başlık, açıklama ve etiketler üretiliyor…")
+        result = None
+        key = None
+        try:
+            from publish.youtube import Keychain
+            key = Keychain().get("anthropic_api_key")
+        except Exception:
+            pass
+        if key:
+            try:
+                import llm_cache
+                ck = llm_cache.key_for("caption", title, artist, theme, *lines)
+                result = llm_cache.get_json(ck)
+                cached = result is not None
+                if result is None:
+                    result = _claude_caption(title, artist, lines, theme, key)
+                    llm_cache.put_json(ck, result)
+                print(f"[engine] job {self.id} caption: Claude"
+                      f"{' (cache, ücretsiz)' if cached else ''}", flush=True)
+            except Exception as exc:
+                print(f"[engine] job {self.id} caption: Claude failed "
+                      f"({exc}); using fallback", flush=True)
+                result = None
+        if not result:
+            base = " ".join(filter(None, [artist, title])) or "Lyric video"
+            result = {
+                "title": base[:90],
+                "caption": f"🎵 {base}\nSözleriyle bir an. Beğendiysen kaydet 💾",
+                "hashtags": ["#keşfet", "#keşfetteyiz", "#reels", "#lyrics",
+                             "#şarkısözleri", "#music", "#fyp", "#shorts",
+                             "#müzik", "#lyricvideo"],
+            }
+        tags = [str(t).strip() for t in (result.get("hashtags") or [])
+                if str(t).strip()]
+        self.set(state="done", progress=1.0,
+                 message="Başlık, açıklama ve etiketler hazır.",
+                 result={
+                     "title": str(result.get("title") or "")[:100],
+                     "description": str(result.get("caption") or "")[:1500],
+                     "hashtags": tags[:30],
+                 })
 
     def _run_subtitle_preview(self):
         """Render a subtitle-only preview MP4 for the chosen style/segment."""
@@ -1843,13 +1960,18 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                              str(e.get("provider_ref", "")))
                             for e in raw_exclude if isinstance(e, dict)
                             and e.get("provider") and e.get("provider_ref")]
-            elif kind in ("lyrics", "align", "translate", "subtitle_preview"):
+            elif kind in ("lyrics", "align", "translate", "caption",
+                          "subtitle_preview"):
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
                     self._send_json(400, {"error_code": "not_found",
                                           "message": "A valid 'source_job_id' is required."})
                     return
-                if kind == "translate":
+                if kind == "caption":
+                    job = Job(kind="caption", source_job_id=source_id)
+                    job.publish_meta = {
+                        "theme": str(body.get("theme") or "").strip()[:300]}
+                elif kind == "translate":
                     job = Job(kind="translate", source_job_id=source_id)
                     job.regenerate = bool(body.get("force"))  # retranslate all
                 elif kind == "lyrics":

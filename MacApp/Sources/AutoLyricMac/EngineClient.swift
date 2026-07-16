@@ -109,6 +109,10 @@ struct JobResult: Decodable, Equatable {
     let sceneErrors: [String]?
     // publish (Phase 8)
     let videoUrl: String?
+    // caption generation
+    let title: String?
+    let description: String?
+    let hashtags: [String]?
 }
 
 /// Adaptation decision for one media asset (never stretch).
@@ -373,6 +377,18 @@ final class EngineClient: ObservableObject {
                                               body: ["kind": "translate",
                                                      "source_job_id": sourceJobId,
                                                      "force": force],
+                                              timeout: 15)
+        return created.jobId
+    }
+
+    /// Generate a reach-optimized title/caption/hashtags for publishing.
+    func createCaptionJob(sourceJobId: String,
+                          theme: String = "") async throws -> String {
+        struct Created: Decodable { let jobId: String }
+        let created: Created = try await post(path: "jobs",
+                                              body: ["kind": "caption",
+                                                     "source_job_id": sourceJobId,
+                                                     "theme": theme],
                                               timeout: 15)
         return created.jobId
     }

@@ -86,6 +86,8 @@ struct ContentView: View {
     @State private var publishTitle: String = ""
     @State private var publishDescription: String = ""
     @State private var publishTags: String = ""
+    @State private var captionBusy = false
+    @State private var captionError: String?
     @State private var publishPrivacy: String = "private"
     @State private var publishedURL: String?
 
@@ -1365,9 +1367,27 @@ struct ContentView: View {
     @ViewBuilder
     private func publishSection(outputPath: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    generateCaption()
+                } label: {
+                    Label(captionBusy ? "Üretiliyor…" : "✨ Başlık & Açıklama & Etiket Üret (AI)",
+                          systemImage: "sparkles")
+                }
+                .disabled(engine.status != .connected || captionBusy
+                          || activeJob?.state != "done")
+                .help("Şarkıya göre keşfete düşürecek başlık, açıklama ve "
+                      + "etiketleri Claude ile üretir ve alanları doldurur.")
+                if captionBusy { ProgressView().controlSize(.small) }
+            }
+            if let e = captionError {
+                Text(e).font(.caption2).foregroundStyle(.red)
+            }
             TextField("Video başlığı", text: $publishTitle)
                 .textFieldStyle(.roundedBorder)
-            TextField("Açıklama (postun altındaki yazı)", text: $publishDescription)
+            TextField("Açıklama (postun altındaki yazı)", text: $publishDescription,
+                      axis: .vertical)
+                .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
             TextField("Etiketler — #lyrics #nostalji #keşfet gibi", text: $publishTags)
                 .textFieldStyle(.roundedBorder)
@@ -1523,6 +1543,32 @@ struct ContentView: View {
                 igMessage = error.errorDescription
             } catch {
                 igMessage = "Could not connect Instagram."
+            }
+        }
+    }
+
+    private func generateCaption() {
+        guard let source = activeJob, source.state == "done" else { return }
+        captionError = nil
+        captionBusy = true
+        let theme = planTheme.trimmingCharacters(in: .whitespaces)
+        Task {
+            defer { captionBusy = false }
+            do {
+                let status = try await awaitJob(
+                    engine.createCaptionJob(sourceJobId: source.jobId,
+                                            theme: theme)) { _ in }
+                guard status.state == "done", let r = status.result else {
+                    captionError = status.message
+                    return
+                }
+                if let t = r.title, !t.isEmpty { publishTitle = t }
+                if let d = r.description, !d.isEmpty { publishDescription = d }
+                if let h = r.hashtags, !h.isEmpty {
+                    publishTags = h.joined(separator: " ")
+                }
+            } catch {
+                captionError = error.localizedDescription
             }
         }
     }
