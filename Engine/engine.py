@@ -1341,6 +1341,10 @@ class Job:
         plan["source_job_id"] = self.source_job_id
         plan["art_style"] = self.art_style or "storybook"
         plan["instrumental"] = bool(self.instrumental)
+        # keep the theme (raw + decomposed English phrases) so media/AI
+        # generation can weight it heavily, not just via scene queries
+        plan["theme"] = theme
+        plan["theme_queries"] = theme_queries
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
         from projects import ProjectStore
@@ -1388,6 +1392,10 @@ class Job:
         # Comic / Pop-Art is defined by its look — always draw in comic style
         if plan.get("style") == "comicPop":
             art_style = "comic"
+        # the user's theme steers every generated image (English decomposed
+        # phrases preferred, raw text otherwise)
+        theme_hint = "; ".join((plan.get("theme_queries") or [])[:4]) \
+            or (plan.get("theme") or "")
         store = MediaStore(MEDIA_DB_PATH)
         for provider, ref in self.exclude_assets:
             store.exclude_asset(self.source_job_id, provider, ref)
@@ -1481,7 +1489,8 @@ class Job:
                     from media.crop import adaptation_plan as _ap
                     scene["scene_index"] = scene.get("scene_index", i)
                     cand, data = generate_image(scene, draw_key,
-                                                style=art_style)
+                                                style=art_style,
+                                                theme=theme_hint)
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     gen_path = dest_dir / f"drawn_{i}.jpg"
                     gen_path.write_bytes(data)
@@ -1497,7 +1506,8 @@ class Job:
                     for k in range(1, ai_extras + 1):
                         try:
                             _c2, d2 = generate_image(scene, draw_key,
-                                                     style=art_style, variant=k)
+                                                     style=art_style, variant=k,
+                                                     theme=theme_hint)
                             ep = dest_dir / f"drawn_{i}_{k}.jpg"
                             ep.write_bytes(d2)
                             extra_paths.append(str(ep))
@@ -1558,7 +1568,8 @@ class Job:
                     try:
                         from media.genai import generate_image
                         scene["scene_index"] = scene.get("scene_index", i)
-                        cand, data = generate_image(scene, fal_key)
+                        cand, data = generate_image(scene, fal_key,
+                                                    theme=theme_hint)
                         dest_dir.mkdir(parents=True, exist_ok=True)
                         gen_path = dest_dir / f"gen_{i}.jpg"
                         gen_path.write_bytes(data)

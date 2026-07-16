@@ -142,12 +142,14 @@ _VIEWS = ["close-up", "wide establishing shot", "side profile view",
           "low angle view", "overhead view", "three-quarter view"]
 
 
-def build_prompt(scene, style="photo", variant=0):
+def build_prompt(scene, style="photo", variant=0, theme=""):
     """Prompt from the scene's queries/emotion and the chosen art style.
 
     `variant` >0 rotates the lead query and adds a distinct camera angle so
     a scene's pool of rotating images (collage) are visibly different from
-    each other and cache to separate entries.
+    each other and cache to separate entries. `theme` (the user's text) is
+    woven in as the overarching world/atmosphere so it strongly steers
+    every generated image, not just the search query.
     """
     style = _resolve_style(style)
     spec = ART_STYLES[style]
@@ -155,6 +157,7 @@ def build_prompt(scene, style="photo", variant=0):
     query = queries[variant % len(queries)]
     emotion = scene.get("emotion", "")
     lyric = scene.get("lyric") or ""
+    theme = (theme or "").strip()
     parts = [query]
     # only the pure photo fallback quotes the lyric; drawn styles never do,
     # so FLUX is not tempted to render (garbled) song text into the art
@@ -162,23 +165,30 @@ def build_prompt(scene, style="photo", variant=0):
         parts.append(f'inspired by the lyric "{lyric[:80]}"')
     if emotion and emotion != "neutral":
         parts.append(f"{emotion} mood")
+    # the user's theme is the guiding world — stated up front and again as a
+    # closing constraint so FLUX keeps every scene inside that atmosphere
+    if theme:
+        parts.insert(1, f"set in the world of {theme[:120]}")
     if variant:
         parts.append(_VIEWS[variant % len(_VIEWS)])
     palette = MOOD_PALETTES.get(emotion, MOOD_PALETTES["neutral"])
     parts.append(spec["prompt"].format(palette=palette))
+    if theme:
+        parts.append(f"strongly themed around {theme[:120]}")
     parts.append(_NO_TEXT)
     return ", ".join(parts)
 
 
 def generate_image(scene, api_key, opener=urllib.request.urlopen,
-                   style="photo", variant=0):
+                   style="photo", variant=0, theme=""):
     """Generate one vertical image; returns (MediaCandidate, image_bytes).
 
     Results are cached by prompt in Cache/genai/ — the same prompt is never
     paid for twice (regenerates, replans and other songs reuse it free).
-    `variant` yields a distinct image (angle/query) for a scene's pool.
+    `variant` yields a distinct image (angle/query) for a scene's pool;
+    `theme` steers the whole image toward the user's text.
     """
-    prompt = build_prompt(scene, style, variant=variant)
+    prompt = build_prompt(scene, style, variant=variant, theme=theme)
     import sys as _sys
     from pathlib import Path as _P
     _sys.path.insert(0, str(_P(__file__).resolve().parent.parent))
