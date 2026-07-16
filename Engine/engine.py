@@ -79,18 +79,37 @@ def _claude_caption(title, artist, lines, theme, api_key):
         ctx += "\nLyrics (excerpt):\n" + "\n".join(lines)
     if theme:
         ctx += f"\nTheme/mood: {theme}"
+    song = title or "bu eser"
     prompt = (
-        "You are a viral short-form music strategist. For an Instagram "
-        "Reels / YouTube Shorts LYRIC video of the song below, write output "
-        "that maximizes reach on the Explore / Keşfet page.\n\n" + ctx +
-        "\n\nReturn ONLY a JSON object:\n"
-        '{"title": "<catchy title <=80 chars, include song & artist>", '
-        '"caption": "<2-4 line Turkish caption, warm and human, 1-3 emojis, '
-        'invites saves/comments; do NOT put hashtags here>", '
-        '"hashtags": ["<18-25 hashtags mixing Turkish discovery tags '
-        "(#keşfet #keşfetteyiz #reels #şarkısözleri) and English "
-        "(#lyrics #music #fyp #shorts #lyricvideo) plus song/artist/genre/"
-        'mood specific ones; each starts with # and has no spaces>"]}')
+        "You write elegant, literary Turkish captions for atmospheric music "
+        "Reels/Shorts. Match THIS house style EXACTLY (adapt the words to the "
+        "song below — never copy this example's content):\n\n"
+        "Bazı ezgiler sözlerinden önce ruhuna dokunur.\n\n"
+        "*Ya Sîdî*, insanı kalabalıklardan uzaklaştırıp kendi içine doğru bir "
+        "yolculuğa çıkarıyor. Sessizliğin, sabrın ve huzurun melodilerle "
+        "buluştuğu; her dinleyişte farklı bir anlam bırakan eserlerden biri.\n\n"
+        "🎵 Ya Sîdî\n\n"
+        "#YaSîdî #MusicFromEverywhere #WorldMusic #Cinematic #Reels #Shorts "
+        "#Atmosphere #Storytelling #Müzik #Keşfet\n\n"
+        "---\n" + ctx + "\n\n"
+        "First derive a CLEAN short song name: drop artist prefixes, feat., "
+        "quotes, brackets and tags like 'Official Video/Audio', 'Clip "
+        "Officiel', 'Lyrics', 'Remastered', 'HD' (e.g. 'Orange Blossom - Ya "
+        "Sidi (Clip Officiel \"Marseille\")' -> 'Ya Sîdî'). Use this clean "
+        "name for the *italic* name, the 🎵 line and the #hashtag.\n"
+        "Rules: poetic and introspective, NOT salesy — no 'yorum yaz / kaydet' "
+        "calls to action, no lyric quotes, no emojis except the single 🎵 "
+        "line. The 'caption' must be EXACTLY: one evocative opening line, "
+        "blank line, a 2-3 sentence paragraph that starts with the song name "
+        f"in *italics* (*{song}*), blank line, then '🎵 {song}'. Hashtags: "
+        "8-12 tasteful CamelCase tags (no spaces), first the song name, then "
+        "mood/genre in English (e.g. WorldMusic, Cinematic, Atmosphere, "
+        "Storytelling, MusicFromEverywhere, Instrumental as fits), and always "
+        "end with #Reels #Shorts #Müzik #Keşfet.\n\n"
+        "Return ONLY JSON: "
+        '{"title": "<song name, optionally — artist>", '
+        '"caption": "<the styled multi-line text above, with real newlines>", '
+        '"hashtags": ["#...", ...]}')
     body = _json.dumps({
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 1200,
@@ -107,9 +126,13 @@ def _claude_caption(title, artist, lines, theme, api_key):
     tags = [str(t).strip() for t in (obj.get("hashtags") or [])]
     tags = [t if t.startswith("#") else "#" + t.lstrip("#")
             for t in tags if t.strip("#")]
+    # hashtags belong only in the array; drop any that Claude appended to the
+    # caption body so the final post doesn't show them twice
+    cap_lines = [ln for ln in str(obj.get("caption") or "").splitlines()
+                 if not ln.strip().startswith("#")]
+    caption = "\n".join(cap_lines).strip()
     return {"title": str(obj.get("title") or "").strip(),
-            "caption": str(obj.get("caption") or "").strip(),
-            "hashtags": tags}
+            "caption": caption, "hashtags": tags}
 
 
 def is_drawn_media(media):
@@ -1016,7 +1039,8 @@ class Job:
         if key:
             try:
                 import llm_cache
-                ck = llm_cache.key_for("caption", title, artist, theme, *lines)
+                ck = llm_cache.key_for("caption", "v4-literary",
+                                       title, artist, theme, *lines)
                 result = llm_cache.get_json(ck)
                 cached = result is not None
                 if result is None:
@@ -1029,13 +1053,18 @@ class Job:
                       f"({exc}); using fallback", flush=True)
                 result = None
         if not result:
-            base = " ".join(filter(None, [artist, title])) or "Lyric video"
+            song = title or "Bu eser"
+            tag = "#" + "".join(ch for ch in song if ch.isalnum())
             result = {
-                "title": base[:90],
-                "caption": f"🎵 {base}\nSözleriyle bir an. Beğendiysen kaydet 💾",
-                "hashtags": ["#keşfet", "#keşfetteyiz", "#reels", "#lyrics",
-                             "#şarkısözleri", "#music", "#fyp", "#shorts",
-                             "#müzik", "#lyricvideo"],
+                "title": " — ".join(filter(None, [song, artist]))[:90],
+                "caption": (
+                    "Bazı ezgiler sözlerinden önce ruhuna dokunur.\n\n"
+                    f"*{song}*, insanı kendi içine doğru sessiz bir yolculuğa "
+                    "çıkaran, her dinleyişte farklı bir anlam bırakan "
+                    f"eserlerden biri.\n\n🎵 {song}"),
+                "hashtags": [tag, "#MusicFromEverywhere", "#WorldMusic",
+                             "#Cinematic", "#Atmosphere", "#Storytelling",
+                             "#Reels", "#Shorts", "#Müzik", "#Keşfet"],
             }
         tags = [str(t).strip() for t in (result.get("hashtags") or [])
                 if str(t).strip()]

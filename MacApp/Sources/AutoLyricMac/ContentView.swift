@@ -1576,7 +1576,9 @@ struct ContentView: View {
     private func startInstagramPublish(outputPath: String) {
         guard let source = activeJob, source.state == "done" else { return }
         publishedURL = nil
-        let caption = [publishTitle, publishDescription, hashtagLine]
+        // Instagram caption is the body itself (the song name already lives
+        // inside it); the title is only used as the YouTube video title.
+        let caption = [publishDescription, hashtagLine]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
         runPlanJob("Instagram publish") {
             try await engine.createInstagramPublishJob(
