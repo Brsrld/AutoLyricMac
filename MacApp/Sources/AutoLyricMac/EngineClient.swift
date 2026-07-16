@@ -469,6 +469,8 @@ final class EngineClient: ObservableObject {
                         regenerate: Bool = false,
                         artStyle: String? = nil,
                         aiImages: Bool = false,
+                        requeryScene: Int? = nil,
+                        requeryQuery: String? = nil,
                         exclude: [(provider: String, ref: String)] = []) async throws -> String {
         struct Created: Decodable { let jobId: String }
         var body: [String: Any] = ["kind": "media",
@@ -477,6 +479,8 @@ final class EngineClient: ObservableObject {
                                    "ai_images": aiImages]
         if let artStyle { body["art_style"] = artStyle }
         if regenerate { body["regenerate"] = true }
+        if let requeryScene { body["requery"] = requeryScene }
+        if let requeryQuery, !requeryQuery.isEmpty { body["requery_query"] = requeryQuery }
         if !exclude.isEmpty {
             body["exclude"] = exclude.map {
                 ["provider": $0.provider, "provider_ref": $0.ref]

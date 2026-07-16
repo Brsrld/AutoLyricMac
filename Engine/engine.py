@@ -67,6 +67,60 @@ def _clean_art_style(value):
     return v if v in ART_STYLES else None
 
 
+def _alt_queries(scene, theme, api_key, avoid=()):
+    """Fresh alternative image-search phrases for one scene.
+
+    Uses Claude for a genuinely different take on the line's imagery
+    (avoiding the queries already tried); falls back to the lexicon +
+    theme when no key is set. Not cached — each call should feel new.
+    """
+    lyric = (scene.get("lyric") or "").strip()
+    meaning = scene.get("meaning", "")
+    emotion = scene.get("emotion", "")
+    if api_key:
+        try:
+            import json as _json
+            import urllib.request as _rq
+            prompt = (
+                "Give 3 fresh, concrete English image-search phrases (2-5 "
+                "words each) for a lyric-video scene — vivid, filmable "
+                "imagery capturing its mood. Return ONLY a JSON array of 3 "
+                f"strings.\nLyric: \"{lyric}\"\nMeaning: {meaning}\n"
+                f"Emotion: {emotion}\nTheme: {theme}\n"
+                f"AVOID these already-tried phrases: {list(avoid)}")
+            body = _json.dumps({
+                "model": "claude-haiku-4-5-20251001", "max_tokens": 200,
+                "messages": [{"role": "user", "content": prompt}]}).encode()
+            req = _rq.Request("https://api.anthropic.com/v1/messages",
+                              data=body,
+                              headers={"x-api-key": api_key,
+                                       "anthropic-version": "2023-06-01",
+                                       "content-type": "application/json"})
+            with _rq.urlopen(req, timeout=40) as resp:
+                payload = _json.loads(resp.read().decode())
+            text = payload["content"][0]["text"]
+            arr = _json.loads(text[text.find("["):text.rfind("]") + 1])
+            out = [str(q).strip() for q in arr if str(q).strip()]
+            if out:
+                return out[:3]
+        except Exception:
+            pass
+    # fallback: lexicon re-read of the line + theme fragments
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from plan.semantic import extract_semantics
+        cand = list(extract_semantics(lyric)["queries"]) if lyric else []
+    except Exception:
+        cand = []
+    for frag in re.split(r"[.,;:\n]", theme or ""):
+        frag = frag.strip()
+        if frag:
+            cand.append(frag)
+    seen = set(avoid)
+    fresh = [q for q in cand if q and q not in seen]
+    return fresh[:3]
+
+
 def _claude_caption(title, artist, lines, theme, api_key):
     """Reach-optimized {title, caption, hashtags} for a lyric Reel/Short."""
     import json as _json
@@ -358,6 +412,8 @@ class Job:
         self.api_keys = api_keys or {}
         self.regenerate = False          # media job: refetch every scene
         self.exclude_assets = []         # media job: [(provider, ref), ...]
+        self.requery_index = None        # media job: regen query for 1 scene
+        self.requery_text = None         # media job: user-typed query override
         self.art_style = None            # plan/media job: AI-draw art style
         self.ai_images = False           # media job: AI-draw collage images
         self.instrumental = False        # plan job: no lyrics, draw from theme
@@ -1381,6 +1437,31 @@ class Job:
                       "Add at least one stock-provider API key (Pexels "
                       "recommended) in the app's Stock Media Keys section.")
             return
+        # per-scene requery: regenerate the search phrases for ONE scene the
+        # user didn't like (Claude alt queries, or a typed override), then
+        # clear its media so only that scene refetches below
+        if self.requery_index is not None \
+                and 0 <= self.requery_index < len(scenes):
+            sc = scenes[self.requery_index]
+            old = list(sc.get("queries") or [])
+            if self.requery_text:
+                sc["queries"] = [self.requery_text] + [
+                    q for q in old if q != self.requery_text]
+            else:
+                theme = self.publish_meta.get("theme", "") or plan.get("theme", "")
+                akey = None
+                try:
+                    from publish.youtube import Keychain
+                    akey = Keychain().get("anthropic_api_key")
+                except Exception:
+                    pass
+                fresh = _alt_queries(sc, theme, akey, avoid=old)
+                if fresh:
+                    sc["queries"] = fresh + [q for q in old if q not in fresh]
+            sc["media"] = None
+            sc.pop("extra_media", None)
+            print(f"[engine] job {self.id} media: requeried scene "
+                  f"{self.requery_index} -> {sc['queries'][:3]}", flush=True)
         # collage family shows a rotating pool per scene; give AI scenes the
         # same variety (main + 2 distinct variants). Single-image styles get 1.
         ai_extras = 0 if plan.get("style") in (
@@ -1997,6 +2078,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     job.art_style = _clean_art_style(body.get("art_style"))
                     job.ai_images = bool(body.get("ai_images"))
                     job.regenerate = bool(body.get("regenerate"))
+                    if body.get("requery") is not None:
+                        try:
+                            job.requery_index = int(body.get("requery"))
+                        except (TypeError, ValueError):
+                            job.requery_index = None
+                        job.requery_text = str(body.get("requery_query")
+                                               or "").strip()[:120] or None
                     raw_exclude = body.get("exclude") or []
                     if isinstance(raw_exclude, list):
                         job.exclude_assets = [

@@ -1354,6 +1354,16 @@ struct ContentView: View {
                 Text("search: \(scene.queries.first ?? "—")")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                Button {
+                    requeryScene(scene.sceneIndex)
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.plain)
+                .font(.caption2)
+                .foregroundStyle(.blue)
+                .help("Bu satır için yeni arama sorgusu üret ve görseli yenile")
+                .disabled(engine.status != .connected || planJobRunning)
                 if let media = scene.media {
                     Label("\(media.provider) · \(media.creator ?? "?") · \(media.license ?? "?")\(media.adaptation.map { " · \($0.strategy)" } ?? "")",
                           systemImage: "photo")
@@ -2066,6 +2076,18 @@ struct ContentView: View {
                                             artStyle: artStyle,
                                             aiImages: aiImages,
                                             exclude: [(provider, ref)])
+        }
+    }
+
+    private func requeryScene(_ index: Int) {
+        guard let source = activeJob, source.state == "done" else { return }
+        let keys = providerKeys
+        runPlanJob("Requery scene \(index)") {
+            try await engine.createMediaJob(sourceJobId: source.jobId,
+                                            apiKeys: keys,
+                                            artStyle: artStyle,
+                                            aiImages: aiImages,
+                                            requeryScene: index)
         }
     }
 
