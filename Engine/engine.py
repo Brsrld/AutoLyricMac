@@ -289,6 +289,7 @@ class Job:
         self.regenerate = False          # media job: refetch every scene
         self.exclude_assets = []         # media job: [(provider, ref), ...]
         self.art_style = None            # plan/media job: AI-draw art style
+        self.ai_images = False           # media job: AI-draw collage images
         self.motion_effects = False      # render job: flicker + breathing
         self.sync_offset = 0.0           # render job: lyrics↔audio nudge (s)
         self.publish_meta = {}           # publish job: title/desc/privacy
@@ -1161,11 +1162,6 @@ class Job:
             self.fail("not_found", "Build a scene plan before fetching media.")
             return
         providers = build_providers(self.api_keys)
-        if not providers:
-            self.fail("no_api_keys",
-                      "Add at least one stock-provider API key (Pexels "
-                      "recommended) in the app's Stock Media Keys section.")
-            return
 
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
         # art style may be changed at media time without a full replan;
@@ -1193,23 +1189,37 @@ class Job:
                 scene["media"] = None
         dest_dir = MEDIA_CACHE_DIR / self.source_job_id
         scenes = plan["scenes"]
-        # A style switch away from Doodle Memory can leave AI-drawn
-        # illustrations in the plan; photo styles must only show photographs,
-        # so those scenes go back to stock search.
-        if plan.get("style") != "doodleMemory":
+        # Doodle Memory is always AI-drawn. Other (collage) styles use stock
+        # photos UNLESS the user asked to draw the background images with AI
+        # (ai_images) — then they're generated in the chosen art style too.
+        is_doodle = plan.get("style") == "doodleMemory"
+        want_ai = is_doodle or self.ai_images
+        # a style switch away from AI can leave drawn images in the plan;
+        # photo-mode scenes must go back to stock search
+        if not want_ai:
             for scene in scenes:
                 if is_drawn_media(scene.get("media")):
                     scene["media"] = None
-        # Doodle Memory scenes are DRAWN, not photographed: generate a
-        # doodle-style illustration per scene (cached by prompt) and skip
-        # stock search entirely when a fal key is available.
         draw_key = None
-        if plan.get("style") == "doodleMemory":
+        if want_ai:
             try:
                 from publish.youtube import Keychain
                 draw_key = Keychain().get("fal_api_key")
             except Exception:
                 pass
+            if not draw_key:
+                self.fail("no_api_keys",
+                          "AI-drawn images need a fal.ai key in Settings.")
+                return
+        if not want_ai and not providers:
+            self.fail("no_api_keys",
+                      "Add at least one stock-provider API key (Pexels "
+                      "recommended) in the app's Stock Media Keys section.")
+            return
+        # collage family shows a rotating pool per scene; give AI scenes the
+        # same variety (main + 2 distinct variants). Single-image styles get 1.
+        ai_extras = 0 if plan.get("style") in ("doodleMemory", "cinemaStill") \
+            else 2
         fetched, provider_errors, scene_errors = 0, [], []
         for i, scene in enumerate(scenes):
             if scene.get("media"):
@@ -1235,6 +1245,20 @@ class Job:
                                       "adaptation": _ap(cand.width,
                                                         cand.height,
                                                         plan["style"])}
+                    # rotating pool: distinct variants so collage beat-swaps
+                    # cycle different drawings, never the same frame
+                    extra_paths = []
+                    for k in range(1, ai_extras + 1):
+                        try:
+                            _c2, d2 = generate_image(scene, draw_key,
+                                                     style=art_style, variant=k)
+                            ep = dest_dir / f"drawn_{i}_{k}.jpg"
+                            ep.write_bytes(d2)
+                            extra_paths.append(str(ep))
+                        except Exception:
+                            break
+                    if extra_paths:
+                        scene["extra_media"] = extra_paths
                     fetched += 1
                     continue
                 except Exception as exc:
@@ -1386,14 +1410,6 @@ class Job:
         with_media = sum(1 for s in plan["scenes"] if s.get("media"))
         if with_media == 0:
             self.fail("not_found", "Fetch licensed media before rendering.")
-            return
-        if self.style != "doodleMemory" \
-                and any(is_drawn_media(s.get("media"))
-                        for s in plan["scenes"]):
-            self.fail("stale_media",
-                      "This plan still holds AI-drawn Doodle scenes; run "
-                      "Build Media (or Regenerate Media) to fetch photos "
-                      f"before rendering {self.style}.")
             return
 
         duration = float(plan["segment_end"]) - float(plan["segment_start"])
@@ -1813,6 +1829,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     job = Job(kind="media", source_job_id=source_id,
                               api_keys=api_keys)
                     job.art_style = _clean_art_style(body.get("art_style"))
+                    job.ai_images = bool(body.get("ai_images"))
                     job.regenerate = bool(body.get("regenerate"))
                     raw_exclude = body.get("exclude") or []
                     if isinstance(raw_exclude, list):

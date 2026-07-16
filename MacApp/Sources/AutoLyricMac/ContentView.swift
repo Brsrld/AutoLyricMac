@@ -55,6 +55,7 @@ struct ContentView: View {
     @State private var planTheme: String = ""
     @State private var planStyle: String = "automatic"
     @State private var artStyle: String = "storybook"
+    @State private var aiImages: Bool = false
     @State private var motionEffects: Bool = false
     @State private var syncOffset: Double = 0.0
     @State private var planJob: JobStatus?
@@ -1135,7 +1136,15 @@ struct ContentView: View {
                     Button("Cancel", role: .cancel) { cancelPlanJob() }
                 }
             }
-            if planStyle == "doodleMemory" || planStyle == "automatic" {
+            let isDoodle = planStyle == "doodleMemory" || planStyle == "automatic"
+            if !isDoodle {
+                Toggle("Arka plan resimlerini AI çiz (stok fotoğraf yerine)",
+                       isOn: $aiImages)
+                    .toggleStyle(.checkbox)
+                    .help("Kolajda dönen görselleri fal.ai ile seçtiğin sanat "
+                          + "stilinde çizer. Değiştirip Build/Regenerate Media.")
+            }
+            if isDoodle || aiImages {
                 HStack(spacing: 8) {
                     Text("AI art style")
                         .font(.caption)
@@ -1152,8 +1161,9 @@ struct ContentView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .fixedSize()
-                    Text("Only affects Doodle scenes drawn by fal.ai. "
-                         + "Change then Build/Regenerate Media.")
+                    Text(isDoodle
+                         ? "Doodle scenes drawn by fal.ai. Change then Build Media."
+                         : "Background images drawn by fal.ai. Build/Regenerate Media.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1975,7 +1985,8 @@ struct ContentView: View {
             try await engine.createMediaJob(sourceJobId: source.jobId,
                                             apiKeys: keys,
                                             regenerate: regenerate,
-                                            artStyle: artStyle)
+                                            artStyle: artStyle,
+                                            aiImages: aiImages)
         }
     }
 
@@ -1985,6 +1996,8 @@ struct ContentView: View {
         runPlanJob("Replace excluded media") {
             try await engine.createMediaJob(sourceJobId: source.jobId,
                                             apiKeys: keys,
+                                            artStyle: artStyle,
+                                            aiImages: aiImages,
                                             exclude: [(provider, ref)])
         }
     }

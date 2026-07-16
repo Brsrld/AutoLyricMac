@@ -118,11 +118,22 @@ def art_style_uses_boil(style):
     return bool(ART_STYLES[_resolve_style(style)].get("boil"))
 
 
-def build_prompt(scene, style="photo"):
-    """Prompt from the scene's queries/emotion and the chosen art style."""
+# distinct camera angles so a scene's rotating pool images differ (variant>0)
+_VIEWS = ["close-up", "wide establishing shot", "side profile view",
+          "low angle view", "overhead view", "three-quarter view"]
+
+
+def build_prompt(scene, style="photo", variant=0):
+    """Prompt from the scene's queries/emotion and the chosen art style.
+
+    `variant` >0 rotates the lead query and adds a distinct camera angle so
+    a scene's pool of rotating images (collage) are visibly different from
+    each other and cache to separate entries.
+    """
     style = _resolve_style(style)
     spec = ART_STYLES[style]
-    query = (scene.get("queries") or ["cinematic scenery"])[0]
+    queries = scene.get("queries") or ["cinematic scenery"]
+    query = queries[variant % len(queries)]
     emotion = scene.get("emotion", "")
     lyric = scene.get("lyric") or ""
     parts = [query]
@@ -132,6 +143,8 @@ def build_prompt(scene, style="photo"):
         parts.append(f'inspired by the lyric "{lyric[:80]}"')
     if emotion and emotion != "neutral":
         parts.append(f"{emotion} mood")
+    if variant:
+        parts.append(_VIEWS[variant % len(_VIEWS)])
     palette = MOOD_PALETTES.get(emotion, MOOD_PALETTES["neutral"])
     parts.append(spec["prompt"].format(palette=palette))
     parts.append(_NO_TEXT)
@@ -139,13 +152,14 @@ def build_prompt(scene, style="photo"):
 
 
 def generate_image(scene, api_key, opener=urllib.request.urlopen,
-                   style="photo"):
+                   style="photo", variant=0):
     """Generate one vertical image; returns (MediaCandidate, image_bytes).
 
     Results are cached by prompt in Cache/genai/ — the same prompt is never
     paid for twice (regenerates, replans and other songs reuse it free).
+    `variant` yields a distinct image (angle/query) for a scene's pool.
     """
-    prompt = build_prompt(scene, style)
+    prompt = build_prompt(scene, style, variant=variant)
     import sys as _sys
     from pathlib import Path as _P
     _sys.path.insert(0, str(_P(__file__).resolve().parent.parent))

@@ -450,11 +450,13 @@ final class EngineClient: ObservableObject {
     func createMediaJob(sourceJobId: String, apiKeys: [String: String],
                         regenerate: Bool = false,
                         artStyle: String? = nil,
+                        aiImages: Bool = false,
                         exclude: [(provider: String, ref: String)] = []) async throws -> String {
         struct Created: Decodable { let jobId: String }
         var body: [String: Any] = ["kind": "media",
                                    "source_job_id": sourceJobId,
-                                   "api_keys": apiKeys]
+                                   "api_keys": apiKeys,
+                                   "ai_images": aiImages]
         if let artStyle { body["art_style"] = artStyle }
         if regenerate { body["regenerate"] = true }
         if !exclude.isEmpty {
