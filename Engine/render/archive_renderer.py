@@ -26,7 +26,7 @@ from proto_common import (FPS, H, W, VideoWriter, drop_shadow, ease_in_out,
                           lerp, make_grain_frames, mono_archive, paper_canvas,
                           shift_scene_times, vignette_map)
 from subtitles.layout import Rect, place_block
-from subtitles.render import build_archive_subtitle
+from subtitles.render import build_archive_subtitle, build_speech_bubble
 
 OVERSIZE = 1.12          # artboard is rendered larger than the frame for drift
 
@@ -46,6 +46,10 @@ VARIANTS = {
                        "sub_ink": (245, 243, 238), "grade": "dark",
                        "full": True, "sub_center": True, "fade": 1.1,
                        "sub_pad": (26, 13)},
+    "comicPop":       {"canvas": (245, 245, 245), "rot": 0.0,
+                       "border": "none", "sub_bg": (252, 252, 250),
+                       "sub_ink": (20, 20, 24), "grade": "none",
+                       "full": True, "sub_bubble": True, "fade": 0.5},
 }
 _V = VARIANTS["archiveCollage"]   # active variant; render_archive swaps it
 BLOCK_PALETTE = [        # translucent layered rectangles (grey/black/white)
@@ -429,6 +433,19 @@ def render_archive(plan, audio_path, out_path, progress=None,
     for i, scene in enumerate(scenes):
         if not scene.get("lyric"):
             subtitles.append(None)
+            continue
+        if _V.get("sub_bubble"):
+            block, size = build_speech_bubble(
+                scene["lyric"], scene.get("translation"), seed=i,
+                uncertain=bool(scene.get("uncertain")))
+            if block is None:
+                subtitles.append(None)
+                continue
+            # upper third, gently alternating side so the tail varies
+            x = (W - size[0]) / 2 + (60 if i % 2 else -60)
+            x = max(20, min(W - size[0] - 20, x))
+            rect = Rect(x, H * 0.06, size[0], size[1])
+            subtitles.append((block, rect))
             continue
         block, size = build_archive_subtitle(
             scene["lyric"], scene.get("translation"), seed=i,

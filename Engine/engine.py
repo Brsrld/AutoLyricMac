@@ -50,13 +50,15 @@ PROJECTS_DB_PATH = REPO_ROOT / "Cache" / "projects.db"
 SUBTITLE_PREVIEW_DIR = REPO_ROOT / "Output" / "subtitle_previews"
 VIDEO_OUTPUT_DIR = REPO_ROOT / "Output" / "videos"
 SUBTITLE_STYLES = ("archiveCollage", "doodleMemory",
-                   "polaroidWall", "minimalDark", "cinemaStill")
+                   "polaroidWall", "minimalDark", "cinemaStill", "comicPop")
 PLAN_STYLES = SUBTITLE_STYLES + ("automatic",)
 RENDER_STYLES = ("archiveCollage", "doodleMemory",
-                 "polaroidWall", "minimalDark", "cinemaStill")
+                 "polaroidWall", "minimalDark", "cinemaStill", "comicPop")
+# styles whose scenes are always fully AI-drawn (one image per scene)
+FULL_AI_STYLES = ("doodleMemory", "comicPop")
 # art directions for AI-drawn (Doodle template) scenes; see media/genai.py
 ART_STYLES = ("storybook", "ghibli", "realistic", "watercolor",
-              "anime", "oil", "caricature")
+              "anime", "oil", "caricature", "comic")
 
 
 def _clean_art_style(value):
@@ -1169,6 +1171,9 @@ class Job:
         if self.art_style:
             plan["art_style"] = self.art_style
         art_style = plan.get("art_style") or "storybook"
+        # Comic / Pop-Art is defined by its look — always draw in comic style
+        if plan.get("style") == "comicPop":
+            art_style = "comic"
         store = MediaStore(MEDIA_DB_PATH)
         for provider, ref in self.exclude_assets:
             store.exclude_asset(self.source_job_id, provider, ref)
@@ -1192,7 +1197,7 @@ class Job:
         # Doodle Memory is always AI-drawn. Other (collage) styles use stock
         # photos UNLESS the user asked to draw the background images with AI
         # (ai_images) — then they're generated in the chosen art style too.
-        is_doodle = plan.get("style") == "doodleMemory"
+        is_doodle = plan.get("style") in FULL_AI_STYLES
         want_ai = is_doodle or self.ai_images
         # a style switch away from AI can leave drawn images in the plan;
         # photo-mode scenes must go back to stock search
@@ -1218,8 +1223,8 @@ class Job:
             return
         # collage family shows a rotating pool per scene; give AI scenes the
         # same variety (main + 2 distinct variants). Single-image styles get 1.
-        ai_extras = 0 if plan.get("style") in ("doodleMemory", "cinemaStill") \
-            else 2
+        ai_extras = 0 if plan.get("style") in (
+            "doodleMemory", "cinemaStill", "comicPop") else 2
         fetched, provider_errors, scene_errors = 0, [], []
         for i, scene in enumerate(scenes):
             if scene.get("media"):

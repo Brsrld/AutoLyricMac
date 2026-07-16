@@ -30,6 +30,7 @@ from subtitles.layout import (SAFE_ZONE, Rect, block_size, place_block,
 
 FONT_TYPEWRITER = "/System/Library/Fonts/Supplemental/AmericanTypewriter.ttc"
 FONT_HAND = "/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf"
+FONT_MARKER = "/System/Library/Fonts/Supplemental/MarkerFelt.ttc"
 
 NAVY = (30, 41, 76)
 INK = (58, 55, 50)
@@ -104,6 +105,60 @@ def build_archive_subtitle(text, translation=None, seed=0, uncertain=False,
     if uncertain:
         block = _mark_uncertain(block)
     return block, (width, height)
+
+
+# ---------------------------------------------------------------------------
+# Comic / Pop-Art: hand-lettered lyrics inside a speech bubble
+# ---------------------------------------------------------------------------
+
+def build_speech_bubble(text, translation=None, seed=0, uncertain=False,
+                        max_width=int(SAFE_ZONE.w * 0.92), ink=(20, 20, 24)):
+    """White comic speech bubble with bold marker lyrics; (image, size)."""
+    size_en, size_tr = 62, 34
+    m_en = fonts.font_for(text, FONT_MARKER)
+    m_tr = fonts.font_for(translation or "", FONT_MARKER)
+    en_lines = wrap_text(text, max_width - 120, _measurer(m_en, size_en))
+    tr_lines = (wrap_text(translation, max_width - 120, _measurer(m_tr, size_tr))
+                if translation else [])
+    font_en = ImageFont.truetype(m_en, size_en)
+    font_tr = ImageFont.truetype(m_tr, size_tr)
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+
+    def dim(s, f):
+        b = probe.textbbox((0, 0), s, font=f)
+        return b[2] - b[0], b[3] - b[1]
+
+    en = [(fonts.shape(l), *dim(fonts.shape(l), font_en)) for l in en_lines]
+    tr = [(fonts.shape(l), *dim(fonts.shape(l), font_tr)) for l in tr_lines]
+    lh_en, lh_tr = size_en + 12, size_tr + 8
+    text_w = max([w for _, w, _ in en + tr] + [10])
+    text_h = len(en) * lh_en + (len(tr) * lh_tr + 14 if tr else 0)
+    padx, pady, tail = 66, 52, 54
+    bw, bh = text_w + padx * 2, text_h + pady * 2
+    img = Image.new("RGBA", (bw + 40, bh + tail + 20), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = 20, 10, 20 + bw, 10 + bh
+    r = min(96, bh // 2)
+    outline, fill = (18, 18, 22), (252, 252, 250)
+    d.rounded_rectangle([x0, y0, x1, y1], radius=r, fill=fill,
+                        outline=outline, width=8)
+    # tail pointing down-left toward the character; fill first to hide seam
+    tx = x0 + int(bw * 0.26)
+    d.polygon([(tx, y1 - 6), (tx + 78, y1 - 6), (tx + 6, y1 + tail)], fill=fill)
+    d.line([(tx, y1 - 2), (tx + 6, y1 + tail)], fill=outline, width=8)
+    d.line([(tx + 78, y1 - 2), (tx + 6, y1 + tail)], fill=outline, width=8)
+    cy = y0 + pady
+    for s, w, h in en:
+        d.text((x0 + (bw - w) // 2, cy), s, font=font_en, fill=ink)
+        cy += lh_en
+    if tr:
+        cy += 14
+        for s, w, h in tr:
+            d.text((x0 + (bw - w) // 2, cy), s, font=font_tr, fill=(96, 96, 104))
+            cy += lh_tr
+    if uncertain:
+        _mark_uncertain(img)
+    return img, (img.width, img.height)
 
 
 # ---------------------------------------------------------------------------

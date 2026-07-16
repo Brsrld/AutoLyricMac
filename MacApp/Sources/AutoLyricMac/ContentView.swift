@@ -432,6 +432,7 @@ struct ContentView: View {
                     Text("Polaroid Wall").tag("polaroidWall")
                     Text("Minimal Dark").tag("minimalDark")
                     Text("Cinematic Still").tag("cinemaStill")
+                    Text("Comic / Pop-Art").tag("comicPop")
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
@@ -1113,6 +1114,7 @@ struct ContentView: View {
                     Text("Polaroid Wall").tag("polaroidWall")
                     Text("Minimal Dark").tag("minimalDark")
                     Text("Cinematic Still").tag("cinemaStill")
+                    Text("Comic / Pop-Art").tag("comicPop")
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()

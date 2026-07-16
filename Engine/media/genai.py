@@ -92,6 +92,16 @@ ART_STYLES = {
                    "wordless illustration, vertical composition, "
                    "no photorealism"),
     },
+    "comic": {
+        "label": "Comic / Pop-Art",
+        "boil": False,
+        "prompt": ("bold pop-art comic book illustration, Lichtenstein style, "
+                   "heavy black ink outlines, Ben-Day halftone dot shading, "
+                   "limited high-contrast palette of black white and hot "
+                   "{palette}, screenprint poster look, dramatic flat "
+                   "graphic shapes, retro comic panel art, vertical "
+                   "composition, no photorealism"),
+    },
     # legacy fallback used when stock search fails on a photo template
     "photo": {
         "label": "Photo",
