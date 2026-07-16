@@ -358,7 +358,8 @@ class TestArtStyles(unittest.TestCase):
         from media.genai import art_style_uses_boil
         for key in ("storybook", "doodle", "caricature"):
             self.assertTrue(art_style_uses_boil(key), key)
-        for key in ("ghibli", "realistic", "watercolor", "anime", "oil"):
+        for key in ("ghibli", "realistic", "watercolor", "anime", "oil",
+                    "pixel", "comic"):
             self.assertFalse(art_style_uses_boil(key), key)
 
     def test_unknown_style_falls_back_to_photo(self):

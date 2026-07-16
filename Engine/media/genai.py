@@ -92,6 +92,15 @@ ART_STYLES = {
                    "wordless illustration, vertical composition, "
                    "no photorealism"),
     },
+    "pixel": {
+        "label": "Pixel Art",
+        "boil": False,
+        "prompt": ("detailed pixel art, 16-bit retro video-game scene, crisp "
+                   "blocky pixels, clean hard pixel edges, dithered shading, "
+                   "limited retro palette with {palette}, isometric-ish "
+                   "lighting, nostalgic arcade aesthetic, vertical "
+                   "composition, no photorealism, no blur, no anti-aliasing"),
+    },
     "comic": {
         "label": "Comic / Pop-Art",
         "boil": False,

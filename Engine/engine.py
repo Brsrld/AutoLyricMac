@@ -58,7 +58,7 @@ RENDER_STYLES = ("archiveCollage", "doodleMemory",
 FULL_AI_STYLES = ("doodleMemory", "comicPop")
 # art directions for AI-drawn (Doodle template) scenes; see media/genai.py
 ART_STYLES = ("storybook", "ghibli", "realistic", "watercolor",
-              "anime", "oil", "caricature", "comic")
+              "anime", "oil", "caricature", "comic", "pixel")
 
 
 def _clean_art_style(value):

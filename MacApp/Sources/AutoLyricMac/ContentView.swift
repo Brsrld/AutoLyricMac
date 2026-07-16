@@ -1161,6 +1161,7 @@ struct ContentView: View {
                         Text("Modern Anime").tag("anime")
                         Text("Oil Painting").tag("oil")
                         Text("Caricature").tag("caricature")
+                        Text("Pixel Art").tag("pixel")
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
