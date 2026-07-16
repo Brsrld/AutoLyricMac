@@ -354,10 +354,10 @@ class TestArtStyles(unittest.TestCase):
         self.assertEqual(build_prompt(self._scene(), style="doodle"),
                          build_prompt(self._scene(), style="storybook"))
 
-    def test_only_storybook_uses_boil(self):
-        from media.genai import ART_STYLES, art_style_uses_boil
-        self.assertTrue(art_style_uses_boil("storybook"))
-        self.assertTrue(art_style_uses_boil("doodle"))
+    def test_hand_drawn_styles_use_boil(self):
+        from media.genai import art_style_uses_boil
+        for key in ("storybook", "doodle", "caricature"):
+            self.assertTrue(art_style_uses_boil(key), key)
         for key in ("ghibli", "realistic", "watercolor", "anime", "oil"):
             self.assertFalse(art_style_uses_boil(key), key)
 

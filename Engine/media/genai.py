@@ -82,6 +82,16 @@ ART_STYLES = {
                    "classical chiaroscuro lighting, {palette}, textured "
                    "canvas, painterly, vertical composition"),
     },
+    "caricature": {
+        "label": "Caricature",
+        "boil": True,
+        "prompt": ("a single exaggerated caricature character, thick "
+                   "confident hand-inked outlines, oversized expressive "
+                   "features, playful humorous cartoon style, flat cel "
+                   "shading, {palette}, simple uncluttered background, "
+                   "wordless illustration, vertical composition, "
+                   "no photorealism"),
+    },
     # legacy fallback used when stock search fails on a photo template
     "photo": {
         "label": "Photo",
@@ -92,7 +102,8 @@ ART_STYLES = {
 }
 
 _NO_TEXT = ("absolutely no text, no letters, no words, no typography, "
-            "no captions, no signature, no watermark")
+            "no captions, no title, no speech bubbles, no comic lettering, "
+            "no signature, no watermark")
 
 
 def _resolve_style(style):
