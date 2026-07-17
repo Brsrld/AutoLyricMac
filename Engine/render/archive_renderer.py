@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from proto_common import (FPS, H, W, VideoWriter, drop_shadow, ease_in_out,
                           lerp, make_grain_frames, mono_archive, paper_canvas,
                           shift_scene_times, vignette_map)
-from subtitles.layout import Rect, place_block
+from subtitles.layout import SAFE_ZONE, Rect, place_block
 from subtitles.render import build_archive_subtitle, build_speech_bubble
 
 OVERSIZE = 1.12          # artboard is rendered larger than the frame for drift
@@ -456,12 +456,16 @@ def render_archive(plan, audio_path, out_path, progress=None,
             subtitles.append(None)
             continue
         if _V.get("sub_center"):
-            rect = Rect((W - size[0]) / 2, (H - size[1]) / 2,
-                        size[0], size[1])
+            # full-bleed styles: sit the strip low (bottom of the safe zone,
+            # above the Reels UI) so it never covers the middle of the image
+            x = max(SAFE_ZONE.x,
+                    min(SAFE_ZONE.right - size[0], (W - size[0]) / 2))
+            y = SAFE_ZONE.bottom - size[1] - 16
+            rect = Rect(x, y, size[0], size[1])
         else:
-            band = (scene.get("subtitle") or {}).get("band", "lower")
+            # keep lyric subtitles in the lower third, away from the photo
             rect = place_block(size, avoid=[subtitle_avoid_rect(layouts[i])],
-                               preferred=band, seed=i)
+                               preferred="lower", seed=i)
         subtitles.append((block, rect))
 
     grain = make_grain_frames(strength=4.5)
