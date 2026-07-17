@@ -103,7 +103,7 @@ struct ContentView: View {
     @State private var igS3PublicBase: String = ""
     @State private var igMessage: String?
 
-    private let durations = [15, 20, 30, 45, 60]
+    private let durations = [30, 45, 60]
 
     private var metadata: SourceMetadata? {
         if case .loaded(let meta) = inspectState { return meta }
@@ -271,7 +271,7 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 380)
+            .frame(maxWidth: 260)
         }
     }
 
@@ -524,6 +524,10 @@ struct ContentView: View {
                 ) { analysisJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
                 let segmentStart = status.result?.segmentStart ?? 0
+                // a track shorter than the target is used whole — plan/render
+                // for the ACTUAL segment length, not the nominal target
+                let segEnd = status.result?.segmentEnd ?? (segmentStart + Double(seconds))
+                let planSeconds = max(1, min(seconds, Int((segEnd - segmentStart).rounded())))
 
                 stage("3/7 Searching lyrics…")
                 status = try await awaitJob(
@@ -545,7 +549,7 @@ struct ContentView: View {
                 status = try await awaitJob(
                     engine.createPlanJob(sourceJobId: sourceId, style: style,
                                          segmentStart: segmentStart,
-                                         targetSeconds: seconds,
+                                         targetSeconds: planSeconds,
                                          theme: planTheme.trimmingCharacters(in: .whitespaces))
                 ) { planJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
@@ -1944,7 +1948,7 @@ struct ContentView: View {
                              sourceJobId: source.jobId,
                              style: previewStyle,
                              segmentStart: segmentStart,
-                             targetSeconds: durationSeconds)
+                             targetSeconds: effectiveDurationSeconds)
                      },
                      onDone: { _ in })
     }
@@ -2030,15 +2034,27 @@ struct ContentView: View {
         }
     }
 
+    /// The requested length, capped to the actual selected segment (a track
+    /// shorter than the target is used whole — plan/render for what exists).
+    private var effectiveDurationSeconds: Int {
+        if let r = analysisJob?.result, let s = r.segmentStart,
+           let e = r.segmentEnd {
+            let len = Int((e - s).rounded())
+            if len > 0 { return min(durationSeconds, len) }
+        }
+        return durationSeconds
+    }
+
     private func startPlan() {
         guard let source = activeJob, source.state == "done" else { return }
         let segmentStart = analysisJob?.result?.segmentStart ?? 0
         let theme = planTheme.trimmingCharacters(in: .whitespaces)
+        let seconds = effectiveDurationSeconds
         runPlanJob("Scene plan") {
             try await engine.createPlanJob(sourceJobId: source.jobId,
                                            style: planStyle,
                                            segmentStart: segmentStart,
-                                           targetSeconds: durationSeconds,
+                                           targetSeconds: seconds,
                                            theme: theme,
                                            artStyle: artStyle,
                                            instrumental: instrumentalMode)

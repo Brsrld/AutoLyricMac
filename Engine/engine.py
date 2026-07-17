@@ -688,11 +688,19 @@ class Job:
         except (KeyError, ValueError, json.JSONDecodeError):
             self.fail("ffmpeg_failed", "Segment verification failed.")
             return
-        if abs(seg_duration - self.target_seconds) > 0.5:
+        # verify against the segment we actually chose, not the nominal target:
+        # a track shorter than the requested length is used whole (e.g. a 28s
+        # song with a 30s target yields a 28s segment — that's fine)
+        chosen_len = choice.end - choice.start
+        if abs(seg_duration - chosen_len) > 0.5:
             self.fail("ffmpeg_failed",
                       f"Segment duration {seg_duration:.2f}s does not match "
-                      f"the requested {self.target_seconds}s.")
+                      f"the selected {chosen_len:.2f}s.")
             return
+        if seg_duration + 0.5 < self.target_seconds:
+            print(f"[engine] job {self.id} segment: track shorter than "
+                  f"{self.target_seconds:.0f}s — using the whole "
+                  f"{seg_duration:.1f}s.", flush=True)
 
         self.set(state="done", progress=1.0,
                  message=f"Segment ready: {choice.start:.1f}s–{choice.end:.1f}s "
