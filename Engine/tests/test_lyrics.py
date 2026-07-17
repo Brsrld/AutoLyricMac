@@ -271,5 +271,48 @@ class TestTitleCleaning(unittest.TestCase):
                          ("", "Just A Title"))
 
 
+class TestLRCLIBRetry(unittest.TestCase):
+    def test_retries_on_5xx_then_succeeds(self):
+        import urllib.error, urllib.request
+        from lyrics.providers import LRCLIBProvider
+        calls = []
+
+        def fake_urlopen(req, timeout=None):
+            calls.append(1)
+            if len(calls) < 3:
+                raise urllib.error.HTTPError(req.full_url, 503, "busy",
+                                             {}, None)
+            class R:
+                def read(self):
+                    return b'{"id":1,"trackName":"X","plainLyrics":"a"}'
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            return R()
+
+        prov = LRCLIBProvider(retries=3, sleeper=lambda s: None)
+        orig = urllib.request.urlopen
+        urllib.request.urlopen = fake_urlopen
+        try:
+            res = prov._fetch_json("https://lrclib.net/api/get?x=1")
+        finally:
+            urllib.request.urlopen = orig
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(res["id"], 1)
+
+    def test_gives_up_after_retries(self):
+        import urllib.error, urllib.request
+        from lyrics.providers import LRCLIBProvider, LyricsProviderError
+        def always_503(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+        prov = LRCLIBProvider(retries=2, sleeper=lambda s: None)
+        orig = urllib.request.urlopen
+        urllib.request.urlopen = always_503
+        try:
+            with self.assertRaises(LyricsProviderError):
+                prov._fetch_json("https://lrclib.net/api/get?x=1")
+        finally:
+            urllib.request.urlopen = orig
+
+
 if __name__ == "__main__":
     unittest.main()

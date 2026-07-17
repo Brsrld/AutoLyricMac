@@ -9,6 +9,7 @@ never build or redistribute a lyrics database.
 
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,23 +61,42 @@ class LRCLIBProvider:
 
     name = "lrclib"
 
-    def __init__(self, base_url="https://lrclib.net/api", timeout=15, opener=None):
+    def __init__(self, base_url="https://lrclib.net/api", timeout=15,
+                 opener=None, retries=3, sleeper=time.sleep):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.retries = retries
+        self.sleeper = sleeper
         # injectable for tests: callable(url) -> decoded JSON object
         self._fetch = opener or self._fetch_json
 
     def _fetch_json(self, url):
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            raise LyricsProviderError(f"LRCLIB returned HTTP {exc.code}.") from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise LyricsProviderError(f"Could not reach LRCLIB: {exc}") from exc
+        last = None
+        for attempt in range(self.retries):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return None
+                # 429/5xx are transient (LRCLIB overloaded) — back off & retry
+                if exc.code in (429, 500, 502, 503, 504) \
+                        and attempt < self.retries - 1:
+                    self.sleeper(1.5 * (attempt + 1))
+                    last = exc
+                    continue
+                raise LyricsProviderError(
+                    f"LRCLIB returned HTTP {exc.code}.") from exc
+            except (urllib.error.URLError, TimeoutError,
+                    json.JSONDecodeError) as exc:
+                if attempt < self.retries - 1:
+                    self.sleeper(1.5 * (attempt + 1))
+                    last = exc
+                    continue
+                raise LyricsProviderError(
+                    f"Could not reach LRCLIB: {exc}") from exc
+        raise LyricsProviderError(f"Could not reach LRCLIB: {last}")
 
     def search(self, artist, title, album="", duration=None):
         """Exact /get first, then several cleaned /search queries.

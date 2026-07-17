@@ -765,10 +765,11 @@ class Job:
                                                       duration=track_duration))
                 except LyricsProviderError as exc:
                     errors.append(str(exc))
-            if not candidates and errors:
-                self.fail("lyrics_failed", " ".join(errors))
-                return
-            store.store_search(cache_key, candidates)
+            # only cache real results — don't cache a transient outage as
+            # "no lyrics" (a retry should hit the provider again)
+            if candidates:
+                store.store_search(cache_key, candidates)
+            self._provider_errors = errors      # surfaced if nothing works
 
         self._check_cancel()
         self.set(progress=0.7, message="Ranking lyric candidates…")
@@ -812,9 +813,13 @@ class Job:
                 ranked = [RankedCandidate(cand, 0.5,
                                           ["transcribed from the audio"])]
             except Exception as exc:
+                prov = "; ".join(getattr(self, "_provider_errors", []) or [])
+                hint = (f"Lyrics provider unavailable ({prov}). "
+                        if prov else "No lyrics found online. ")
                 self.fail("lyrics_not_found",
-                          f"No lyrics found online and transcription failed "
-                          f"({exc}). You can use Enter Lyrics Manually.")
+                          f"{hint}Transcribing from the audio also failed "
+                          f"({exc}). Try again in a moment or use "
+                          f"“Enter Lyrics Manually”.")
                 return
         best = ranked[0]
         for line in best.reasons:
