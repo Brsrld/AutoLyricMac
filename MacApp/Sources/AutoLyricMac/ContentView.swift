@@ -103,7 +103,7 @@ struct ContentView: View {
     @State private var igS3PublicBase: String = ""
     @State private var igMessage: String?
 
-    private let durations = [30, 45, 60]
+    private let durations = [15, 20, 30, 45, 60]
 
     private var metadata: SourceMetadata? {
         if case .loaded(let meta) = inspectState { return meta }
@@ -271,7 +271,7 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 260)
+            .frame(maxWidth: 380)
         }
     }
 
