@@ -76,5 +76,15 @@ class TestFillMissingTranslations(unittest.TestCase):
         self.assertEqual((translated, skipped), (0, 0))
 
 
+class TestGuessLanguage(unittest.TestCase):
+    def test_scripts(self):
+        from lyrics.translate import guess_language
+        self.assertEqual(guess_language(["مش هسمحلك تئذي مشاعري"]), "ar")
+        self.assertEqual(guess_language(["Привет как дела друг"]), "ru")
+        self.assertEqual(guess_language(["Gözlerin gökyüzü gibi"]), "tr")
+        self.assertIsNone(guess_language(["hold me close tonight"]))
+        self.assertIsNone(guess_language([""]))
+
+
 if __name__ == "__main__":
     unittest.main()

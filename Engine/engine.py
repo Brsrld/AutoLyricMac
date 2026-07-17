@@ -737,7 +737,8 @@ class Job:
     def _run_lyrics(self):
         """Search lyric providers, rank candidates, store the best match."""
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from lyrics.providers import LyricsProviderError, default_providers
+        from lyrics.providers import (LyricsProviderError, clean_track_name,
+                                      default_providers, split_artist_title)
         from lyrics.ranking import rank_candidates
         from lyrics.store import LyricsStore
 
@@ -771,7 +772,15 @@ class Job:
 
         self._check_cancel()
         self.set(progress=0.7, message="Ranking lyric candidates…")
-        ranked = rank_candidates(candidates, artist, title, track_duration)
+        # rank against cleaned artist/title (noisy YouTube titles otherwise
+        # score the correct match too low); parse "Artist - Title" if needed
+        rank_artist, rank_title = clean_track_name(artist), clean_track_name(title)
+        if not rank_artist:
+            pa, pt = split_artist_title(title)
+            if pa and pt:
+                rank_artist, rank_title = clean_track_name(pa), clean_track_name(pt)
+        ranked = rank_candidates(candidates, rank_artist or artist,
+                                 rank_title or title, track_duration)
         if not ranked:
             # no provider hit: extract lyrics from the song's own vocals
             self.set(progress=0.75,
@@ -787,10 +796,11 @@ class Job:
                                         flush=True)) or source_audio
                 self._check_cancel()
                 words, lang = transcribe_words(vocals, ffmpeg=FFMPEG)
-                from lyrics.translate import looks_turkish
+                from lyrics.translate import guess_language
                 texts = words_to_lines(words)
-                if lang != "tr" and looks_turkish(texts):
-                    words, lang = transcribe_words(vocals, language="tr",
+                _guess = guess_language(texts)
+                if _guess and _guess != lang:
+                    words, lang = transcribe_words(vocals, language=_guess,
                                                    ffmpeg=FFMPEG)
                     texts = words_to_lines(words)
                 if len(texts) < 2:
@@ -860,9 +870,9 @@ class Job:
         self.set(progress=0.35,
                  message="Transcribing vocals (local Whisper)…")
         try:
-            from lyrics.translate import looks_turkish as _ltr
-            lang_hint = "tr" if _ltr([ln["display_text"]
-                                      for ln in payload["lines"]]) else None
+            from lyrics.translate import guess_language
+            lang_hint = guess_language([ln["display_text"]
+                                        for ln in payload["lines"]])
             asr_words, source_lang = transcribe_words(align_audio,
                                                       language=lang_hint,
                                                       ffmpeg=FFMPEG)

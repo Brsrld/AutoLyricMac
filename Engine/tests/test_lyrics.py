@@ -137,7 +137,8 @@ class TestLRCLIBProviderMocked(unittest.TestCase):
         self.assertEqual(refs, ["7", "9", "10"])  # dedup + empty dropped
         self.assertTrue(results[0].synced)
         self.assertTrue(results[2].instrumental)
-        self.assertEqual(len(calls), 2)
+        # 1 exact /get + 2 cleaned /search queries (combo + title-only)
+        self.assertEqual(len(calls), 3)
 
     def test_get_404_falls_through_to_search(self):
         provider = LRCLIBProvider(
@@ -246,6 +247,28 @@ class TestLyricsStore(unittest.TestCase):
         self.assertEqual(cached[0].provider_ref, "7")
         self.assertTrue(cached[0].synced)
         self.assertIsNone(self.store.cached_search("k", ttl=-1))
+
+
+class TestTitleCleaning(unittest.TestCase):
+    def test_strips_youtube_noise(self):
+        from lyrics.providers import clean_track_name
+        self.assertEqual(clean_track_name(
+            'Ya Sidi (Clip Officiel "Marseille") [4K]'), "Ya Sidi")
+        self.assertEqual(clean_track_name(
+            "In The End [Official HD Music Video]"), "In The End")
+        self.assertEqual(clean_track_name(
+            "Numb (Official Music Video) [4K UPGRADE]"), "Numb")
+        self.assertEqual(clean_track_name(
+            "Wake Me Up (Official Lyric Video) | Avicii"), "Wake Me Up")
+        self.assertEqual(clean_track_name(
+            "Shot Me Down feat. Skylar Grey"), "Shot Me Down")
+
+    def test_split_artist_title(self):
+        from lyrics.providers import split_artist_title
+        self.assertEqual(split_artist_title("Orange Blossom - Ya Sidi"),
+                         ("Orange Blossom", "Ya Sidi"))
+        self.assertEqual(split_artist_title("Just A Title"),
+                         ("", "Just A Title"))
 
 
 if __name__ == "__main__":

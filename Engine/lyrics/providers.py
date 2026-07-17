@@ -8,6 +8,7 @@ never build or redistribute a lyrics database.
 """
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +17,38 @@ from pathlib import Path
 from .models import LyricsCandidate
 
 USER_AGENT = "AutoLyricMac/0.3 (local personal-use app)"
+
+# YouTube-title noise that ruins an exact lyrics lookup
+_TITLE_JUNK = re.compile(r"""(?ix)
+    \b(
+        official\s*(music\s*)?(video|audio|lyric[s]?\s*video|visualizer|version)
+        | lyric[s]?(\s*video)? | audio | video | visualizer
+        | hd | 4k | hq | m/?v | mv
+        | remaster(ed)?(\s*\d{4})? | remix | live | acoustic | cover | karaoke
+        | clip\s*officiel | full\s*(song|album|video) | with\s*lyrics
+        | color\s*coded | sub(title)?s?
+    )\b""")
+
+
+def clean_track_name(text):
+    """Strip YouTube-title noise (brackets, 'Official Video', feat., | channel)."""
+    t = text or ""
+    t = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", t)      # (…) […] {…}
+    t = re.split(r"\s+[|•·]\s+", t)[0]                       # drop "| channel"
+    t = re.sub(r"(?i)\s*(feat\.?|ft\.?|featuring)\s+.*$", "", t)
+    t = _TITLE_JUNK.sub(" ", t)
+    t = t.replace("“", "").replace("”", "").replace('"', "")
+    t = re.sub(r"\s{2,}", " ", t).strip(" -–—•·:|")
+    return t
+
+
+def split_artist_title(raw):
+    """Best-effort ('artist', 'title') from an 'Artist - Title' string."""
+    for sep in (" - ", " – ", " — ", " · "):
+        if sep in (raw or ""):
+            a, b = raw.split(sep, 1)
+            return a.strip(), b.strip()
+    return "", (raw or "").strip()
 
 
 class LyricsProviderError(Exception):
@@ -46,33 +79,55 @@ class LRCLIBProvider:
             raise LyricsProviderError(f"Could not reach LRCLIB: {exc}") from exc
 
     def search(self, artist, title, album="", duration=None):
-        """Exact /get lookup first (when duration is known), then /search."""
+        """Exact /get first, then several cleaned /search queries.
+
+        YouTube titles are noisy ('… (Official Video) [4K]'), which breaks
+        LRCLIB's exact match, so we also try a cleaned artist/title, a
+        title-only query, and — when no artist was given — an artist parsed
+        from an 'Artist - Title' string. Candidates from every query are
+        gathered and de-duplicated; ranking picks the best.
+        """
         results = []
         seen_refs = set()
+        ca, ct = clean_track_name(artist), clean_track_name(title)
+        if not ca:                       # no artist? try "Artist - Title"
+            pa, pt = split_artist_title(title)
+            if pa and pt:
+                ca, ct = clean_track_name(pa), clean_track_name(pt)
 
-        if artist and title and duration:
-            params = urllib.parse.urlencode({
-                "artist_name": artist, "track_name": title,
-                "album_name": album or "", "duration": int(round(duration)),
-            })
-            exact = self._fetch(f"{self.base_url}/get?{params}")
-            if isinstance(exact, dict):
-                cand = self._to_candidate(exact)
-                if cand:
-                    results.append(cand)
-                    seen_refs.add(cand.provider_ref)
+        def add(item):
+            cand = self._to_candidate(item)
+            if cand and cand.provider_ref not in seen_refs:
+                results.append(cand)
+                seen_refs.add(cand.provider_ref)
 
-        query = " ".join(p for p in (artist, title) if p).strip()
-        if query:
-            params = urllib.parse.urlencode({"q": query})
-            found = self._fetch(f"{self.base_url}/search?{params}") or []
+        # exact lookups (cleaned first, then raw) when duration is known
+        for a, t in [(ca, ct), (artist, title)]:
+            if a and t and duration:
+                params = urllib.parse.urlencode({
+                    "artist_name": a, "track_name": t,
+                    "album_name": album or "", "duration": int(round(duration))})
+                exact = self._fetch(f"{self.base_url}/get?{params}")
+                if isinstance(exact, dict):
+                    add(exact)
+                    break
+
+        # fuzzy searches: cleaned "artist title", cleaned title, raw combo
+        queries = []
+        for q in (f"{ca} {ct}".strip(), ct,
+                  " ".join(p for p in (artist, title) if p).strip()):
+            q = q.strip()
+            if q and q.lower() not in {x.lower() for x in queries}:
+                queries.append(q)
+        for q in queries:
+            found = self._fetch(
+                f"{self.base_url}/search?{urllib.parse.urlencode({'q': q})}") or []
             if not isinstance(found, list):
-                raise LyricsProviderError("LRCLIB search returned an unexpected payload.")
+                continue
             for item in found[:20]:
-                cand = self._to_candidate(item)
-                if cand and cand.provider_ref not in seen_refs:
-                    results.append(cand)
-                    seen_refs.add(cand.provider_ref)
+                add(item)
+            if len(results) >= 25:
+                break
         return results
 
     def _to_candidate(self, item):

@@ -33,6 +33,35 @@ def looks_turkish(line_texts):
         (len(words) > 0 and word_hits / len(words) >= 0.08)
 
 
+def guess_language(line_texts):
+    """Best-effort Whisper language code from the lyrics' script/heuristics.
+
+    Helps Whisper transcribe foreign songs in the right language (so the
+    hybrid aligner can word-time them) instead of mis-detecting. Returns a
+    2-letter code or None (let Whisper auto-detect).
+    """
+    text = " ".join(line_texts or "")
+    if not text.strip():
+        return None
+    if looks_turkish(line_texts):
+        return "tr"
+
+    def frac(lo, hi):
+        n = sum(1 for c in text if lo <= c <= hi)
+        letters = sum(1 for c in text if c.isalpha()) or 1
+        return n / letters
+
+    if frac("؀", "ۿ") > 0.3 or frac("ﭐ", "﷿") > 0.3:
+        return "ar"
+    if frac("Ѐ", "ӿ") > 0.3:
+        return "ru"
+    if frac("Ͱ", "Ͽ") > 0.3 or frac("ἀ", "ῼ") > 0.3:
+        return "el"
+    if frac("֐", "׿") > 0.3:
+        return "he"
+    return None
+
+
 def claude_translate_lines(lines, api_key, source_lang="auto"):
     """High-quality lyric translation via the Anthropic API (optional).
 
