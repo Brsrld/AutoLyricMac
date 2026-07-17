@@ -158,6 +158,8 @@ def build_prompt(scene, style="photo", variant=0, theme=""):
     emotion = scene.get("emotion", "")
     lyric = scene.get("lyric") or ""
     theme = (theme or "").strip()
+    # the lyric line is the SUBJECT and stays first (strongest); the theme
+    # only tints its meaning/mood, so it appears once, late and softly
     parts = [query]
     # only the pure photo fallback quotes the lyric; drawn styles never do,
     # so FLUX is not tempted to render (garbled) song text into the art
@@ -165,16 +167,12 @@ def build_prompt(scene, style="photo", variant=0, theme=""):
         parts.append(f'inspired by the lyric "{lyric[:80]}"')
     if emotion and emotion != "neutral":
         parts.append(f"{emotion} mood")
-    # the user's theme is the guiding world — stated up front and again as a
-    # closing constraint so FLUX keeps every scene inside that atmosphere
-    if theme:
-        parts.insert(1, f"set in the world of {theme[:120]}")
     if variant:
         parts.append(_VIEWS[variant % len(_VIEWS)])
     palette = MOOD_PALETTES.get(emotion, MOOD_PALETTES["neutral"])
     parts.append(spec["prompt"].format(palette=palette))
     if theme:
-        parts.append(f"strongly themed around {theme[:120]}")
+        parts.append(f"subtle {theme[:100]} undertone")
     parts.append(_NO_TEXT)
     return ", ".join(parts)
 
