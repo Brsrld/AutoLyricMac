@@ -1540,17 +1540,21 @@ class Job:
                                    if e not in provider_errors)
             ranked, rejected = rank_media(candidates, scene,
                                           scene_duration=scene["duration"])
-            # let Claude LOOK at the top thumbnails and reorder by fit
+            # let Claude LOOK at the top thumbnails, reorder by fit, and tell
+            # us if NONE of the stock photos genuinely match this line
+            none_fit = False
             try:
                 from publish.youtube import Keychain
                 vkey = Keychain().get("anthropic_api_key")
                 if vkey and len(ranked) > 1:
                     from media.vision_rank import claude_vision_order
                     theme = self.publish_meta.get("theme", "") or                         plan.get("theme", "")
-                    order = claude_vision_order(ranked, scene, theme, vkey)
+                    order, none_fit = claude_vision_order(
+                        ranked, scene, theme, vkey)
                     ranked = [ranked[k] for k in order]
                     print(f"[engine] job {self.id} media: scene {i} "
-                          f"vision-ranked", flush=True)
+                          f"vision-ranked{' (none fit)' if none_fit else ''}",
+                          flush=True)
             except Exception as exc:
                 print(f"[engine] job {self.id} media: vision rank skipped "
                       f"({exc})", flush=True)
@@ -1558,6 +1562,39 @@ class Job:
                 print(f"[engine] job {self.id} media: rejected "
                       f"{cand.provider}/{cand.provider_ref}: {reason}",
                       flush=True)
+            # no stock photo fits → draw the scene with AI (on lyric+theme)
+            # instead of forcing an irrelevant photo (cinemaStill stays photo)
+            if none_fit and plan.get("style") != "cinemaStill":
+                fk = None
+                try:
+                    from publish.youtube import Keychain
+                    fk = Keychain().get("fal_api_key")
+                except Exception:
+                    pass
+                if fk:
+                    try:
+                        from media.crop import adaptation_plan as _ap
+                        from media.genai import generate_image
+                        scene["scene_index"] = scene.get("scene_index", i)
+                        cand, data = generate_image(
+                            scene, fk, style=(art_style if want_ai else "photo"),
+                            theme=theme_hint)
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        gp = dest_dir / f"gen_{i}.jpg"
+                        gp.write_bytes(data)
+                        store.record_asset(self.source_job_id, i, cand, gp)
+                        scene["media"] = {**cand.summary(),
+                                          "file_path": str(gp),
+                                          "adaptation": _ap(cand.width,
+                                                            cand.height,
+                                                            plan["style"])}
+                        fetched += 1
+                        print(f"[engine] job {self.id} media: scene {i} "
+                              f"AI-drawn (no stock photo fit)", flush=True)
+                        continue
+                    except Exception as exc:
+                        print(f"[engine] job {self.id} media: none-fit AI draw "
+                              f"failed ({exc}); using best stock", flush=True)
             try:
                 chosen, path = pick_and_fetch(
                     ranked, self.source_job_id, i, store, dest_dir,

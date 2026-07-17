@@ -23,11 +23,15 @@ def _fetch_thumb(url, timeout=20):
 
 
 def claude_vision_order(candidates, scene, theme, api_key,
-                        opener=urllib.request.urlopen, max_images=6):
-    """Return candidate indexes ordered best-first by looking at thumbs.
+                        opener=urllib.request.urlopen, max_images=12):
+    """Order candidate indexes best-first by looking at the thumbnails.
 
-    `candidates`: RankedMedia list (uses .candidate.thumb_url). Raises on
-    failure — caller falls back to keyword order.
+    Returns (order, none_fit): `order` is candidate indexes best-first;
+    `none_fit` is True when Claude judged that none of the shown photos
+    genuinely fit the line (so the caller can draw the scene with AI
+    instead of forcing an irrelevant stock photo). `candidates` is a
+    RankedMedia list (uses .candidate.thumb_url). Raises on failure — the
+    caller falls back to keyword order.
     """
     import sys
     from pathlib import Path
@@ -36,15 +40,19 @@ def claude_vision_order(candidates, scene, theme, api_key,
 
     subset = [r for r in candidates if r.candidate.thumb_url][:max_images]
     if len(subset) < 2:
-        return list(range(len(candidates)))
+        return list(range(len(candidates))), False
     refs = [f"{r.candidate.provider}:{r.candidate.provider_ref}"
             for r in subset]
     ck = llm_cache.key_for("vrank", scene.get("lyric") or "",
                            scene.get("emotion", ""), theme or "", *refs)
     cached = llm_cache.get_json(ck)
-    if cached is not None:
-        order = cached
+    if isinstance(cached, dict):
+        order, none_fit = cached.get("order") or [], bool(cached.get("none_fit"))
+    elif isinstance(cached, list):          # legacy cache entry
+        order, none_fit = cached, False
     else:
+        order = none_fit = None
+    if order is None:
         content = []
         for i, r in enumerate(subset):
             b64, mime = _fetch_thumb(r.candidate.thumb_url)
@@ -55,11 +63,13 @@ def claude_vision_order(candidates, scene, theme, api_key,
             f"Lyric line: \"{scene.get('lyric') or '(instrumental)'}\"\n"
             f"Mood: {scene.get('emotion', 'neutral')}. "
             f"Song theme: {theme or 'unknown'}.\n"
-            "Which images best carry this line's soul in a cinematic lyric "
-            "video? Reply ONLY with a JSON array of image numbers, best "
-            "first, e.g. [3,1,2].")})
+            "Rank the images that genuinely fit this line's meaning/mood for "
+            "a cinematic lyric video, best first. Be strict — leave OUT any "
+            "image that is off-topic or generic. Reply ONLY as JSON: "
+            '{"order":[best-first image numbers that fit], '
+            '"none_fit": true only if NONE of them really fit}.')})
         body = json.dumps({"model": "claude-haiku-4-5-20251001",
-                           "max_tokens": 100,
+                           "max_tokens": 150,
                            "messages": [{"role": "user",
                                          "content": content}]}).encode()
         req = urllib.request.Request(
@@ -69,10 +79,13 @@ def claude_vision_order(candidates, scene, theme, api_key,
                      "content-type": "application/json"})
         with opener(req) as resp:
             text = json.loads(resp.read())["content"][0]["text"]
-        order = json.loads(text[text.find("["):text.rfind("]") + 1])
-        llm_cache.put_json(ck, order)
+        obj = json.loads(text[text.find("{"):text.rfind("}") + 1])
+        order = [n for n in (obj.get("order") or [])
+                 if isinstance(n, int) and 1 <= n <= len(subset)]
+        none_fit = bool(obj.get("none_fit")) or not order
+        llm_cache.put_json(ck, {"order": order, "none_fit": none_fit})
 
     picked = [n - 1 for n in order
               if isinstance(n, int) and 1 <= n <= len(subset)]
     rest = [i for i in range(len(candidates)) if i not in picked]
-    return picked + rest
+    return picked + rest, none_fit
