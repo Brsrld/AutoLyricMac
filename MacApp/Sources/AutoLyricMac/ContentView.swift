@@ -1609,7 +1609,8 @@ struct ContentView: View {
         runPlanJob("Instagram publish") {
             try await engine.createInstagramPublishJob(
                 sourceJobId: source.jobId, outputPath: outputPath,
-                caption: caption)
+                caption: caption,
+                audioName: publishTitle.trimmingCharacters(in: .whitespaces))
         }
     }
 

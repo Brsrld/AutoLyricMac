@@ -1834,12 +1834,21 @@ class Job:
             self.set(progress=0.1 + 0.8 * frac,
                      message="Instagram is processing the video…")
 
+        # the audio name shown atop the Reel = the song name (so people can
+        # find other videos using this sound); fall back to the project title
+        audio_name = (self.publish_meta.get("audio_name") or "").strip()
+        if not audio_name:
+            from lyrics.providers import clean_track_name
+            from projects import ProjectStore as _PS
+            proj = _PS(PROJECTS_DB_PATH).get_project(self.source_job_id) or {}
+            audio_name = clean_track_name(proj.get("title") or "")
+
         self.set(state="downloading", progress=0.05,
                  message="Uploading temporarily and creating the Reel…")
         try:
             url = InstagramConnector().publish(
                 video, caption=self.publish_meta.get("description", ""),
-                progress=progress)
+                audio_name=audio_name, progress=progress)
         except PublishError as exc:
             self.fail("publish_failed", str(exc))
             return
@@ -2054,7 +2063,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                           url=str(body.get("output_path") or ""),
                           source_job_id=source_id)
                 job.publish_meta = {
-                    "description": str(body.get("caption") or "")[:2200]}
+                    "description": str(body.get("caption") or "")[:2200],
+                    "audio_name": str(body.get("audio_name") or "")[:100]}
             elif kind == "publish_youtube":
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):

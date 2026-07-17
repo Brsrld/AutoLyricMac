@@ -208,14 +208,22 @@ def verify_account(access_token, ig_user_id, opener=urllib.request.urlopen):
     return username
 
 
-def publish_reel(access_token, ig_user_id, video_url, caption,
+def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
                  opener=urllib.request.urlopen, sleeper=time.sleep,
                  progress=None):
-    """Container create -> poll FINISHED -> publish -> permalink."""
-    created = _graph("POST", f"/{ig_user_id}/media", {
+    """Container create -> poll FINISHED -> publish -> permalink.
+
+    `audio_name` sets the Reel's original-audio title (what shows at the top
+    of the reel and lets people find other videos using that sound). It can
+    be set only once; we set it to the song name.
+    """
+    params = {
         "media_type": "REELS", "video_url": video_url,
         "caption": caption[:2200], "share_to_feed": "true",
-        "access_token": access_token}, opener)
+        "access_token": access_token}
+    if audio_name.strip():
+        params["audio_name"] = audio_name.strip()[:100]
+    created = _graph("POST", f"/{ig_user_id}/media", params, opener)
     container = created.get("id")
     if not container:
         raise PublishError("Instagram did not return a media container id.")
@@ -272,7 +280,8 @@ class InstagramConnector:
         for account in (ACC_TOKEN, ACC_USER_ID, ACC_S3_CONFIG):
             self.keychain.delete(account)
 
-    def publish(self, file_path, caption, progress=None, sleeper=time.sleep):
+    def publish(self, file_path, caption, progress=None, sleeper=time.sleep,
+                audio_name=""):
         from pathlib import Path
         path = Path(file_path)
         if not path.is_file():
@@ -289,6 +298,7 @@ class InstagramConnector:
         video_url = store.upload(path, key)
         try:
             permalink = publish_reel(token, user_id, video_url, caption,
+                                     audio_name=audio_name,
                                      opener=self.opener, sleeper=sleeper,
                                      progress=progress)
         finally:
