@@ -125,35 +125,45 @@ class TempObjectStore:
             raise PublishError(f"Could not reach object storage: "
                                f"{exc.reason}") from exc
 
-    def _request_curl(self, method, url, headers, data):
+    def _request_curl(self, method, url, headers, data, attempts=3):
+        import os
         import subprocess
         import tempfile
-        cmd = ["/usr/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-               "-X", method, "--max-time", "300"]
+        import time
+        base = ["/usr/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                "-X", method,
+                "--connect-timeout", "30",   # fail fast on a dead connection
+                "--max-time", "900"]         # allow big reels on a slow uplink
         for name, value in headers.items():
-            cmd += ["-H", f"{name}: {value}"]
+            base += ["-H", f"{name}: {value}"]
         tmp = None
         if data is not None:
             tmp = tempfile.NamedTemporaryFile(delete=False)
             tmp.write(data)
             tmp.close()
-            cmd += ["--data-binary", f"@{tmp.name}"]
-        cmd.append(url)
+            base += ["--data-binary", f"@{tmp.name}"]
+        base.append(url)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True,
-                                    timeout=320)
+            last_rc = None
+            for attempt in range(attempts):
+                result = subprocess.run(base, capture_output=True, text=True,
+                                        timeout=960)
+                if result.returncode == 0:
+                    code = int(result.stdout.strip() or 0)
+                    if code >= 300:
+                        raise PublishError(f"Object storage {method} failed "
+                                           f"(HTTP {code}).")
+                    return code
+                last_rc = result.returncode          # 28 = timeout, etc.
+                if attempt < attempts - 1:
+                    time.sleep(2 * (attempt + 1))
         finally:
             if tmp is not None:
-                import os
                 os.unlink(tmp.name)
-        code = int(result.stdout.strip() or 0)
-        if result.returncode != 0:
-            raise PublishError(f"Could not reach object storage "
-                               f"(curl {result.returncode}).")
-        if code >= 300:
-            raise PublishError(f"Object storage {method} failed "
-                               f"(HTTP {code}).")
-        return code
+        hint = (" (zaman aşımı — internet/R2 bağlantısını kontrol et; büyük "
+                "video yavaş yüklenebilir)" if last_rc == 28 else "")
+        raise PublishError(f"Could not reach object storage "
+                           f"(curl {last_rc}){hint}.")
 
     def upload(self, file_path, key):
         data = open(file_path, "rb").read()
