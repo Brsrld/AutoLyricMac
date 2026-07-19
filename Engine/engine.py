@@ -1531,7 +1531,7 @@ class Job:
                                                 style=art_style,
                                                 theme=theme_hint)
                     dest_dir.mkdir(parents=True, exist_ok=True)
-                    gen_path = dest_dir / f"drawn_{i}.jpg"
+                    gen_path = dest_dir / f"drawn_{i}_{self.id[:6]}.jpg"
                     gen_path.write_bytes(data)
                     store.record_asset(self.source_job_id, i, cand, gen_path)
                     scene["media"] = {**cand.summary(),
@@ -1547,7 +1547,7 @@ class Job:
                             _c2, d2 = generate_image(scene, draw_key,
                                                      style=art_style, variant=k,
                                                      theme=theme_hint)
-                            ep = dest_dir / f"drawn_{i}_{k}.jpg"
+                            ep = dest_dir / f"drawn_{i}_{k}_{self.id[:6]}.jpg"
                             ep.write_bytes(d2)
                             extra_paths.append(str(ep))
                         except Exception:
@@ -1609,7 +1609,7 @@ class Job:
                             scene, fk, style=(art_style if want_ai else "photo"),
                             theme=theme_hint)
                         dest_dir.mkdir(parents=True, exist_ok=True)
-                        gp = dest_dir / f"gen_{i}.jpg"
+                        gp = dest_dir / f"gen_{i}_{self.id[:6]}.jpg"
                         gp.write_bytes(data)
                         store.record_asset(self.source_job_id, i, cand, gp)
                         scene["media"] = {**cand.summary(),
@@ -1647,7 +1647,7 @@ class Job:
                         cand, data = generate_image(scene, fal_key,
                                                     theme=theme_hint)
                         dest_dir.mkdir(parents=True, exist_ok=True)
-                        gen_path = dest_dir / f"gen_{i}.jpg"
+                        gen_path = dest_dir / f"gen_{i}_{self.id[:6]}.jpg"
                         gen_path.write_bytes(data)
                         store.record_asset(self.source_job_id, i, cand,
                                            gen_path)

@@ -1358,6 +1358,7 @@ struct ContentView: View {
         }
         .frame(width: 42, height: 74)
         .clipShape(RoundedRectangle(cornerRadius: 5))
+        .id(path ?? "")   // reload when the scene's image path changes
     }
 
     @ViewBuilder
