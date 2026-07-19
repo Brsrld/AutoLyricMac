@@ -1332,7 +1332,7 @@ class Job:
                 import llm_cache
                 texts = sorted({ln["display_text"] for ln in payload["lines"]
                                 if ln["display_text"].strip()})
-                ck = llm_cache.key_for("sem", title_hint, *texts)
+                ck = llm_cache.key_for("sem", "v2-chunked", title_hint, *texts)
                 lut = llm_cache.get_json(ck)
                 cached = lut is not None
                 if lut is None:

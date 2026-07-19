@@ -224,13 +224,32 @@ def extract_semantics(text):
     }
 
 
-def claude_semantics(line_texts, title_hint, api_key):
-    """Optional LLM semantics: per-line emotion/subjects/stock queries.
+def claude_semantics(line_texts, title_hint, api_key, chunk=12):
+    """LLM semantics per line: emotion/subjects/concrete stock queries.
 
-    One batched request; returns {line_text: semantics_dict} shaped exactly
-    like extract_semantics output. Raises on any failure so the caller
-    falls back to the lexicon.
+    Processes the lyrics in small chunks (reliable per-line output and
+    length match) and is TOLERANT: any line a chunk fails to cover falls
+    back to the lexicon for that single line, so one hiccup never dumps the
+    whole song to generic queries. Returns {line_text: semantics_dict}.
+    Raises only if the very first chunk errors (so the caller can fall back
+    entirely when there's no network/key at all).
     """
+    out = {}
+    for start in range(0, len(line_texts), chunk):
+        batch = line_texts[start:start + chunk]
+        try:
+            part = _claude_semantics_batch(batch, title_hint, api_key)
+        except Exception:
+            if start == 0:
+                raise                    # no usable LLM at all → lexicon
+            part = {}
+        for ln in batch:
+            out[ln] = part.get(ln) or extract_semantics(ln)
+    return out
+
+
+def _claude_semantics_batch(line_texts, title_hint, api_key):
+    """One request for a small batch; index-matched, lexicon-filled gaps."""
     import json
     import urllib.request
 
@@ -257,16 +276,20 @@ def claude_semantics(line_texts, title_hint, api_key):
         payload = json.loads(resp.read().decode())
     text = payload["content"][0]["text"]
     items = json.loads(text[text.find("["):text.rfind("]") + 1])
-    if len(items) != len(line_texts):
-        raise ValueError("semantic payload length mismatch")
     out = {}
-    for line, item in zip(line_texts, items):
+    for idx, line in enumerate(line_texts):
+        item = items[idx] if idx < len(items) and isinstance(
+            items[idx], dict) else None
+        queries = [str(q) for q in (item or {}).get("queries", [])][:4]
+        if not item or not queries:
+            out[line] = extract_semantics(line)   # lexicon-fill this line
+            continue
         emotions = {e: 0.0 for e in EMOTIONS}
         if item.get("emotion") in emotions:
             emotions[item["emotion"]] = 1.0
         out[line] = {"subjects": [str(s) for s in item.get("subjects", [])][:4],
                      "emotions": emotions,
-                     "queries": [str(q) for q in item.get("queries", [])][:4],
+                     "queries": queries,
                      "matched": ["llm"]}
     return out
 
