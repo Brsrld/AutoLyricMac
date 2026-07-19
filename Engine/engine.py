@@ -1156,11 +1156,19 @@ class Job:
             }
         tags = [str(t).strip() for t in (result.get("hashtags") or [])
                 if str(t).strip()]
+        caption = str(result.get("caption") or "")
+        # @mention the artist's Instagram handle (added after Claude/cache so
+        # the user can change it freely) — links to their account in the post
+        mention = (self.publish_meta or {}).get("mention", "").strip()
+        if mention:
+            handle = "@" + mention.lstrip("@").strip()
+            if handle.lower() not in caption.lower():
+                caption = caption.rstrip() + f"\n🎤 {handle}"
         self.set(state="done", progress=1.0,
                  message="Başlık, açıklama ve etiketler hazır.",
                  result={
                      "title": str(result.get("title") or "")[:100],
-                     "description": str(result.get("caption") or "")[:1500],
+                     "description": caption[:1500],
                      "hashtags": tags[:30],
                  })
 
@@ -2191,7 +2199,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 if kind == "caption":
                     job = Job(kind="caption", source_job_id=source_id)
                     job.publish_meta = {
-                        "theme": str(body.get("theme") or "").strip()[:300]}
+                        "theme": str(body.get("theme") or "").strip()[:300],
+                        "mention": str(body.get("mention") or "").strip()[:60]}
                 elif kind == "translate":
                     job = Job(kind="translate", source_job_id=source_id)
                     job.regenerate = bool(body.get("force"))  # retranslate all

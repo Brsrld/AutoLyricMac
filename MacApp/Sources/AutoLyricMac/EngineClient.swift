@@ -383,12 +383,14 @@ final class EngineClient: ObservableObject {
 
     /// Generate a reach-optimized title/caption/hashtags for publishing.
     func createCaptionJob(sourceJobId: String,
-                          theme: String = "") async throws -> String {
+                          theme: String = "",
+                          mention: String = "") async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "caption",
                                                      "source_job_id": sourceJobId,
-                                                     "theme": theme],
+                                                     "theme": theme,
+                                                     "mention": mention],
                                               timeout: 15)
         return created.jobId
     }

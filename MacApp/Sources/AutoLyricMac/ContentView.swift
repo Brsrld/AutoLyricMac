@@ -89,6 +89,7 @@ struct ContentView: View {
     @State private var publishTags: String = ""
     @State private var captionBusy = false
     @State private var captionError: String?
+    @State private var artistHandle: String = ""
     @State private var publishPrivacy: String = "private"
     @State private var publishedURL: String?
 
@@ -1441,6 +1442,15 @@ struct ContentView: View {
                       + "etiketleri Claude ile üretir ve alanları doldurur.")
                 if captionBusy { ProgressView().controlSize(.small) }
             }
+            HStack(spacing: 6) {
+                Image(systemName: "at").font(.caption2).foregroundStyle(.secondary)
+                TextField("Sanatçı Instagram kullanıcı adı (ör. orangeblossom)",
+                          text: $artistHandle)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 360)
+                    .help("Girersen açıklamaya @kullanıcıadı olarak eklenir "
+                          + "(sanatçıyı etiketler). Boş bırakabilirsin.")
+            }
             if let e = captionError {
                 Text(e).font(.caption2).foregroundStyle(.red)
             }
@@ -1617,8 +1627,10 @@ struct ContentView: View {
             defer { captionBusy = false }
             do {
                 let status = try await awaitJob(
-                    engine.createCaptionJob(sourceJobId: source.jobId,
-                                            theme: theme)) { _ in }
+                    engine.createCaptionJob(
+                        sourceJobId: source.jobId, theme: theme,
+                        mention: artistHandle.trimmingCharacters(in: .whitespaces))
+                ) { _ in }
                 guard status.state == "done", let r = status.result else {
                     captionError = status.message
                     return
