@@ -337,11 +337,13 @@ class InstagramConnector:
         if progress:
             progress(0.05)
         video_url = store.upload(path, key)
-        # Instagram fetches this URL over the internet — make sure it's
-        # publicly readable before wasting a container (and quota) on it
+        # Sanity-check the public URL, but only ABORT on a definitive
+        # not-public/missing (403/404). A local connect failure (HTTP 0 —
+        # e.g. antivirus TLS interception on this machine) is NOT proof:
+        # Instagram fetches the URL from its own servers, so we proceed.
         if self.opener is urllib.request.urlopen:
             code, _ctype = store.public_head(video_url)
-            if code != 200:
+            if code in (401, 403, 404):
                 store.delete(key)
                 raise PublishError(
                     f"Yüklenen video herkese açık URL'den okunamıyor "
