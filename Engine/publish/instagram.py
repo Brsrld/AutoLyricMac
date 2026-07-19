@@ -176,6 +176,21 @@ class TempObjectStore:
         except PublishError:
             pass  # best effort; a stale temp object is not fatal
 
+    def public_head(self, url):
+        """(http_code, content_type) for the public URL Instagram will fetch."""
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["/usr/bin/curl", "-sI", "-L", "-o", "/dev/null",
+                 "-w", "%{http_code} %{content_type}",
+                 "--connect-timeout", "20", "--max-time", "40", url],
+                capture_output=True, text=True, timeout=50)
+        except Exception:
+            return 0, ""
+        parts = (r.stdout or "").split()
+        code = int(parts[0]) if parts and parts[0].isdigit() else 0
+        return code, (parts[1] if len(parts) > 1 else "")
+
 
 # ---------------------------------------------------------------------------
 # Graph API flow
@@ -250,14 +265,19 @@ def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
     waited = 0
     interval = POLL_INTERVAL
     while waited < POLL_TIMEOUT:
-        status = _graph("GET", f"/{container}",
-                        {"fields": "status_code", "access_token": access_token},
-                        opener).get("status_code")
+        info = _graph("GET", f"/{container}",
+                      {"fields": "status_code,status",
+                       "access_token": access_token}, opener)
+        status = info.get("status_code")
         if status == "FINISHED":
             break
         if status == "ERROR":
-            raise PublishError("Instagram could not process the video "
-                               "(container status ERROR).")
+            # surface Instagram's own reason (e.g. bad codec / duration / URL)
+            detail = str(info.get("status") or "").strip()
+            raise PublishError(
+                "Instagram could not process the video"
+                + (f": {detail}" if detail else " (container status ERROR)")
+                + ".")
         if progress:
             progress(min(0.9, waited / 120))
         sleeper(interval)
@@ -317,6 +337,18 @@ class InstagramConnector:
         if progress:
             progress(0.05)
         video_url = store.upload(path, key)
+        # Instagram fetches this URL over the internet — make sure it's
+        # publicly readable before wasting a container (and quota) on it
+        if self.opener is urllib.request.urlopen:
+            code, _ctype = store.public_head(video_url)
+            if code != 200:
+                store.delete(key)
+                raise PublishError(
+                    f"Yüklenen video herkese açık URL'den okunamıyor "
+                    f"(HTTP {code}). R2 bucket'ı public mi ve 'public_base' "
+                    f"doğru mu kontrol et:\n{video_url}")
+        if progress:
+            progress(0.1)
         try:
             permalink = publish_reel(token, user_id, video_url, caption,
                                      audio_name=audio_name,

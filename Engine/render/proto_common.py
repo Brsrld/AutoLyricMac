@@ -217,9 +217,15 @@ class VideoWriter:
             "-r", str(FPS), "-i", "-",
             "-ss", str(audio_offset), "-t", str(duration), "-i", str(audio_path),
             "-map", "0:v", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+            # H.264 High@4.1, capped bitrate: high-detail frames otherwise hit
+            # ~30 Mbps / 200+ MB, which Instagram Reels rejects (container
+            # ERROR) and is slow to upload. ~10 Mbps looks great at 1080p and
+            # IG re-encodes anyway.
+            "-c:v", "libx264", "-preset", "medium", "-crf", "21",
+            "-maxrate", "10M", "-bufsize", "20M",
+            "-profile:v", "high", "-level", "4.1",
             "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c:a", "aac", "-b:a", "160k",
             "-af", f"afade=t=in:d=0.6,afade=t=out:st={fade_out}:d=0.6",
             "-shortest", str(out_path),
         ]
