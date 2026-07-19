@@ -197,5 +197,20 @@ class TestConnector(unittest.TestCase):
             conn.publish(tmp.name, "c")
 
 
+class TestRateLimitMessage(unittest.TestCase):
+    def test_403_request_limit_gives_clear_message(self):
+        import urllib.error
+        from publish.instagram import _graph, PublishError
+
+        def opener(req):
+            body = json.dumps({"error": {"message": "Application request "
+                                         "limit reached", "code": 4}}).encode()
+            raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {},
+                                         io.BytesIO(body))
+        with self.assertRaises(PublishError) as cm:
+            _graph("GET", "/me", {"access_token": "x"}, opener)
+        self.assertIn("istek limitine", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

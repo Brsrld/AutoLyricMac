@@ -194,11 +194,20 @@ def _graph(method, path, params, opener):
         with opener(req) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
-        detail = ""
+        detail, code = "", None
         try:
-            detail = json.loads(exc.read().decode())["error"]["message"]
+            err = json.loads(exc.read().decode()).get("error", {})
+            detail = err.get("message", "")
+            code = err.get("code")
         except Exception:
             pass
+        # Meta app-level rate limit (codes 4/17/32/613 or 'request limit')
+        if code in (4, 17, 32, 613) or "request limit" in detail.lower() \
+                or "rate limit" in detail.lower():
+            raise PublishError(
+                "Instagram uygulaması istek limitine takıldı. Bu Meta'nın "
+                "saatlik kotası — biraz bekleyip (genelde ~1 saat) tekrar "
+                "dene. Peş peşe denemek limiti daha da uzatır.") from exc
         raise PublishError(f"Instagram API error (HTTP {exc.code}). "
                            f"{detail}".strip()) from exc
     except urllib.error.URLError as exc:
@@ -239,6 +248,7 @@ def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
         raise PublishError("Instagram did not return a media container id.")
 
     waited = 0
+    interval = POLL_INTERVAL
     while waited < POLL_TIMEOUT:
         status = _graph("GET", f"/{container}",
                         {"fields": "status_code", "access_token": access_token},
@@ -250,8 +260,9 @@ def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
                                "(container status ERROR).")
         if progress:
             progress(min(0.9, waited / 120))
-        sleeper(POLL_INTERVAL)
-        waited += POLL_INTERVAL
+        sleeper(interval)
+        waited += interval
+        interval = min(20, interval + 3)   # back off to spare the API quota
     else:
         raise PublishError("Instagram processing timed out.")
 
