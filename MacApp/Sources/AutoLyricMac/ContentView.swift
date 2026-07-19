@@ -1330,6 +1330,37 @@ struct ContentView: View {
 
     @ViewBuilder
     private func sceneRow(_ scene: ScenePayload) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            sceneThumb(scene.media?.filePath)
+            sceneRowBody(scene)
+        }
+    }
+
+    /// A small preview of the scene's drawn/fetched image (9:16 thumbnail).
+    @ViewBuilder
+    private func sceneThumb(_ path: String?) -> some View {
+        Group {
+            if let path, !path.isEmpty {
+                AsyncImage(url: URL(fileURLWithPath: path)) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    default:
+                        Rectangle().fill(.quaternary)
+                    }
+                }
+            } else {
+                Rectangle().fill(.quaternary)
+                    .overlay(Image(systemName: "photo")
+                        .font(.caption2).foregroundStyle(.secondary))
+            }
+        }
+        .frame(width: 42, height: 74)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+
+    @ViewBuilder
+    private func sceneRowBody(_ scene: ScenePayload) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text("\(Self.formatDuration(scene.start))–\(Self.formatDuration(scene.end))")

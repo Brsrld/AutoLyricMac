@@ -150,16 +150,18 @@ def _claude_caption(title, artist, lines, theme, api_key):
         "quotes, brackets and tags like 'Official Video/Audio', 'Clip "
         "Officiel', 'Lyrics', 'Remastered', 'HD' (e.g. 'Orange Blossom - Ya "
         "Sidi (Clip Officiel \"Marseille\")' -> 'Ya Sîdî'). Use this clean "
-        "name for the *italic* name, the 🎵 line and the #hashtag.\n"
+        "name for the paragraph, the 🎵 line and the #hashtag.\n"
         "Rules: poetic and introspective, NOT salesy — no 'yorum yaz / kaydet' "
         "calls to action, no lyric quotes, no emojis except the single 🎵 "
-        "line. The 'caption' must be EXACTLY: one evocative opening line, "
-        "blank line, a 2-3 sentence paragraph that starts with the song name "
-        f"in *italics* (*{song}*), blank line, then '🎵 {song}'. Hashtags: "
-        "8-12 tasteful CamelCase tags (no spaces), first the song name, then "
-        "mood/genre in English (e.g. WorldMusic, Cinematic, Atmosphere, "
-        "Storytelling, MusicFromEverywhere, Instrumental as fits), and always "
-        "end with #Reels #Shorts #Müzik #Keşfet.\n\n"
+        "line, and NO markdown/asterisks anywhere. The 'caption' must be "
+        "EXACTLY: one evocative opening line, blank line, a 2-3 sentence "
+        f"paragraph that starts with the plain song name ({song}), blank "
+        f"line, then '🎵 {song}'. Hashtags: 8-12 tasteful CamelCase tags "
+        "(no spaces): first the song name, then the ARTIST name as a tag"
+        + (f" (#{re.sub(r'[^A-Za-z0-9]', '', artist)})" if artist else "")
+        + ", then mood/genre in English (e.g. WorldMusic, Cinematic, "
+        "Atmosphere, Storytelling, MusicFromEverywhere, Instrumental as "
+        "fits), and always end with #Reels #Shorts #Müzik #Keşfet.\n\n"
         "Return ONLY JSON: "
         '{"title": "<song name, optionally — artist>", '
         '"caption": "<the styled multi-line text above, with real newlines>", '
@@ -180,11 +182,15 @@ def _claude_caption(title, artist, lines, theme, api_key):
     tags = [str(t).strip() for t in (obj.get("hashtags") or [])]
     tags = [t if t.startswith("#") else "#" + t.lstrip("#")
             for t in tags if t.strip("#")]
-    # hashtags belong only in the array; drop any that Claude appended to the
-    # caption body so the final post doesn't show them twice
+    # make sure the artist is tagged (add near the front if the model missed it)
+    art_tag = "#" + re.sub(r"[^A-Za-z0-9]", "", artist) if artist else ""
+    if art_tag and art_tag.lower() not in {t.lower() for t in tags}:
+        tags.insert(1, art_tag)
+    # hashtags belong only in the array; drop any Claude appended to the body;
+    # strip stray markdown asterisks (Instagram shows them literally)
     cap_lines = [ln for ln in str(obj.get("caption") or "").splitlines()
                  if not ln.strip().startswith("#")]
-    caption = "\n".join(cap_lines).strip()
+    caption = "\n".join(cap_lines).replace("*", "").strip()
     return {"title": str(obj.get("title") or "").strip(),
             "caption": caption, "hashtags": tags}
 
@@ -1119,7 +1125,7 @@ class Job:
         if key:
             try:
                 import llm_cache
-                ck = llm_cache.key_for("caption", "v4-literary",
+                ck = llm_cache.key_for("caption", "v5-plain-artist",
                                        title, artist, theme, *lines)
                 result = llm_cache.get_json(ck)
                 cached = result is not None
@@ -1135,16 +1141,18 @@ class Job:
         if not result:
             song = title or "Bu eser"
             tag = "#" + "".join(ch for ch in song if ch.isalnum())
+            art_tag = "#" + "".join(ch for ch in artist if ch.isalnum())
             result = {
                 "title": " — ".join(filter(None, [song, artist]))[:90],
                 "caption": (
                     "Bazı ezgiler sözlerinden önce ruhuna dokunur.\n\n"
-                    f"*{song}*, insanı kendi içine doğru sessiz bir yolculuğa "
+                    f"{song}, insanı kendi içine doğru sessiz bir yolculuğa "
                     "çıkaran, her dinleyişte farklı bir anlam bırakan "
                     f"eserlerden biri.\n\n🎵 {song}"),
-                "hashtags": [tag, "#MusicFromEverywhere", "#WorldMusic",
+                "hashtags": ([tag] + ([art_tag] if artist else []) + [
+                             "#MusicFromEverywhere", "#WorldMusic",
                              "#Cinematic", "#Atmosphere", "#Storytelling",
-                             "#Reels", "#Shorts", "#Müzik", "#Keşfet"],
+                             "#Reels", "#Shorts", "#Müzik", "#Keşfet"]),
             }
         tags = [str(t).strip() for t in (result.get("hashtags") or [])
                 if str(t).strip()]
