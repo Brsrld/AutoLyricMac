@@ -498,6 +498,7 @@ struct ContentView: View {
         lyrics = nil
         plan = nil
         editingLine = nil
+        resetPublishFields()
         stopPreview()
         let keys = providerKeys
         let style = planStyle
@@ -703,6 +704,7 @@ struct ContentView: View {
         planJob = nil
         planError = nil
         editingLine = nil
+        resetPublishFields()
         activeJob = JobStatus(
             jobId: project.jobId, kind: "download", state: "done",
             progress: 1.0, message: "Restored from history.",
@@ -1617,6 +1619,18 @@ struct ContentView: View {
                 igMessage = "Could not connect Instagram."
             }
         }
+    }
+
+    /// Clear the caption/hashtag/@mention fields so one song's post details
+    /// never carry over to the next (a stale @mention was tagging the wrong,
+    /// next post).
+    private func resetPublishFields() {
+        publishTitle = ""
+        publishDescription = ""
+        publishTags = ""
+        artistHandle = ""
+        captionError = nil
+        publishedURL = nil
     }
 
     private func generateCaption() {
