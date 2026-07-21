@@ -183,6 +183,10 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
     rec_style, rec_conf, rec_reason = recommend_style(
         emotion_totals, analysis.get("tempo_bpm", 100.0))
     style_key = style if style in _DURATIONS else rec_style
+    # ONE emotion for the whole song: per-line emotions swing (hope -> sad ->
+    # hope) and make the palette/mood — and the images' meaning — drift.
+    # A single song-level emotion keeps every scene coherent.
+    song_emotion = dominant_emotion(emotion_totals)
 
     all_subjects = []
     for ln in timed:
@@ -203,7 +207,7 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
         energy = _mean_energy(analysis, start, end)
         band = _energy_band(energy)
         lo, hi = _DURATIONS[style_key][band]
-        emotion = dominant_emotion(sem["emotions"])
+        emotion = song_emotion          # song-wide mood, not per-line
 
         motions = _MOTIONS[style_key]
         motion = motions[(i + int(energy * 10)) % len(motions)]
