@@ -74,9 +74,18 @@ _EMOTIONS = ("love", "longing", "joy", "melancholy", "calm", "energy",
 
 
 def _clean_emotion(value):
-    """Return a valid user-picked emotion or '' (auto-detect)."""
+    """Return the user-picked mood or '' (auto-detect).
+
+    A known keyword maps to a palette + song-context queries; free text
+    (the "Diğer" option) still steers the image prompt as "<mood> mood"
+    and is applied song-wide. Free text is trimmed to letters/spaces so it
+    can't smuggle punctuation or huge strings into the prompt.
+    """
     v = str(value or "").strip().lower()
-    return v if v in _EMOTIONS else ""
+    if not v or v in _EMOTIONS:
+        return v if v in _EMOTIONS else ""
+    v = "".join(ch for ch in v if ch.isalpha() or ch.isspace()).strip()
+    return v[:40]
 
 
 def _alt_queries(scene, theme, api_key, avoid=()):

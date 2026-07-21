@@ -186,9 +186,10 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
     # ONE emotion for the whole song: per-line emotions swing (hope -> sad ->
     # hope) and make the palette/mood — and the images' meaning — drift.
     # A single song-level emotion keeps every scene coherent. The user can
-    # override it (they know the song's feel better than the auto-detector).
-    song_emotion = (emotion_override if emotion_override in EMOTION_QUERIES
-                    else dominant_emotion(emotion_totals))
+    # override it (they know the song's feel better than the auto-detector) —
+    # either one of the known moods (which also picks a palette) or free text
+    # (which still steers the image prompt as "<mood> mood").
+    song_emotion = (emotion_override or "").strip() or dominant_emotion(emotion_totals)
 
     all_subjects = []
     for ln in timed:

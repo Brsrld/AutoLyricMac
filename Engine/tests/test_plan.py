@@ -157,12 +157,19 @@ class TestScenePlan(unittest.TestCase):
         emotions = {s["emotion"] for s in plan["scenes"]}
         self.assertEqual(emotions, {"hope"})
 
-    def test_invalid_emotion_override_falls_back_to_auto(self):
+    def test_freetext_emotion_override_applies_song_wide(self):
+        # a custom mood the analyzer doesn't know is still used everywhere
+        plan = build_scene_plan(make_lines(), make_analysis(),
+                                "archiveCollage", 0, 45,
+                                emotion_override="isyan")
+        self.assertEqual({s["emotion"] for s in plan["scenes"]}, {"isyan"})
+
+    def test_empty_emotion_override_uses_auto(self):
         auto = build_scene_plan(make_lines(), make_analysis(),
                                 "archiveCollage", 0, 45)
         forced = build_scene_plan(make_lines(), make_analysis(),
                                   "archiveCollage", 0, 45,
-                                  emotion_override="not-an-emotion")
+                                  emotion_override="   ")
         self.assertEqual([s["emotion"] for s in forced["scenes"]],
                          [s["emotion"] for s in auto["scenes"]])
 

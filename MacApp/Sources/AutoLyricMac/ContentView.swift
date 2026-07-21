@@ -58,8 +58,10 @@ struct ContentView: View {
     @State private var aiImages: Bool = false
     @State private var instrumentalMode: Bool = false
     // user-picked song mood ("" = let the analyzer decide); the auto
-    // detector often guesses wrong, so let the user set it
+    // detector often guesses wrong, so let the user set it. "__custom__"
+    // means use the free-text emotionCustom field instead.
     @State private var emotionChoice: String = ""
+    @State private var emotionCustom: String = ""
     @State private var motionEffects: Bool = false
     @State private var syncOffset: Double = 0.0
     @State private var planJob: JobStatus?
@@ -556,7 +558,7 @@ struct ContentView: View {
                                          segmentStart: segmentStart,
                                          targetSeconds: planSeconds,
                                          theme: planTheme.trimmingCharacters(in: .whitespaces),
-                                         emotion: emotionChoice)
+                                         emotion: effectiveEmotion)
                 ) { planJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
                 let resolvedStyle = status.result?.style ?? "archiveCollage"
@@ -1130,10 +1132,16 @@ struct ContentView: View {
                     Text("Nostalji").tag("nostalgia")
                     Text("Yalnızlık").tag("loneliness")
                     Text("Umut").tag("hope")
+                    Text("Diğer (elle gir)").tag("__custom__")
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .fixedSize()
+                if emotionChoice == "__custom__" {
+                    TextField("örn. isyan, pişmanlık, huzur…", text: $emotionCustom)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 200)
+                }
                 Text("Tüm şarkının rengini/moodunu belirler. Değiştirince planı yeniden kur.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -2131,6 +2139,15 @@ struct ContentView: View {
         return durationSeconds
     }
 
+    // resolved song mood: the free-text field when "Diğer" is picked,
+    // otherwise the dropdown value ("" = auto-detect)
+    private var effectiveEmotion: String {
+        if emotionChoice == "__custom__" {
+            return emotionCustom.trimmingCharacters(in: .whitespaces)
+        }
+        return emotionChoice
+    }
+
     private func startPlan() {
         guard let source = activeJob, source.state == "done" else { return }
         let segmentStart = analysisJob?.result?.segmentStart ?? 0
@@ -2144,7 +2161,7 @@ struct ContentView: View {
                                            theme: theme,
                                            artStyle: artStyle,
                                            instrumental: instrumentalMode,
-                                           emotion: emotionChoice)
+                                           emotion: effectiveEmotion)
         }
     }
 
