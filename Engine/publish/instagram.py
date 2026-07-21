@@ -300,24 +300,46 @@ def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
     collabs = [c.lstrip("@").strip() for c in (collaborators or [])
                if str(c).strip()][:3]
     location_id = str(location_id or "").strip()
+
+    # Try the most-tagged container first, then degrade GRACEFULLY — but keep
+    # the collaborator co-author tag (the important one) as long as possible,
+    # so a bad location never drops the artist tag. Only the last attempt (no
+    # extras) is allowed to fail: the post still goes out untagged rather than
+    # being lost on a typo or a rate-limited retry.
+    def _with(collab_on, loc_on):
+        p = _params()
+        if collab_on and collabs:
+            p["collaborators"] = json.dumps(collabs)
+        if loc_on and location_id:
+            p["location_id"] = location_id
+        return p
+
+    attempts = []            # (label, params) most-complete first
+    if collabs and location_id:
+        attempts.append(("collaborators+location", _with(True, True)))
+        attempts.append(("collaborators only", _with(True, False)))
+    elif collabs:
+        attempts.append(("collaborators", _with(True, False)))
+    elif location_id:
+        attempts.append(("location", _with(False, True)))
+    attempts.append(("no discovery extras", _params()))
+
     container = None
-    if collabs or location_id:
-        params = _params()
-        if collabs:
-            params["collaborators"] = json.dumps(collabs)
-        if location_id:
-            params["location_id"] = location_id
+    for i, (label, params) in enumerate(attempts):
+        last = i == len(attempts) - 1
         try:
             created = _graph("POST", f"/{ig_user_id}/media", params, opener)
             container = created.get("id")
+            if container:
+                if i > 0:
+                    print(f"[instagram] published with '{label}' after the "
+                          f"richer tag set was rejected", flush=True)
+                break
         except Exception as exc:
-            print(f"[instagram] discovery extras rejected "
-                  f"(collaborators={collabs}, location_id={location_id!r}: "
-                  f"{exc}); publishing without them", flush=True)
-            container = None
-    if not container:
-        created = _graph("POST", f"/{ig_user_id}/media", _params(), opener)
-        container = created.get("id")
+            if last:
+                raise
+            print(f"[instagram] '{label}' rejected ({exc}); retrying with "
+                  f"fewer discovery extras", flush=True)
     if not container:
         raise PublishError("Instagram did not return a media container id.")
 

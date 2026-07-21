@@ -177,6 +177,39 @@ class TestGraphFlow(unittest.TestCase):
         self.assertIn("collaborators", bodies[0])  # first had the tag
         self.assertNotIn("collaborators", bodies[1])  # retry dropped it
 
+    def test_bad_location_keeps_collaborator_tag(self):
+        # regression: a rejected location must NOT drop the co-author tag too
+        import urllib.parse
+        bodies, calls = [], {"n": 0}
+
+        def opener(req):
+            url = req.full_url
+            if url.endswith("/media"):
+                calls["n"] += 1
+                body = urllib.parse.parse_qs((req.data or b"").decode())
+                bodies.append(body)
+                # first try (collaborators+location) rejected for the location
+                if calls["n"] == 1 and "location_id" in body:
+                    raise PublishError("Invalid location id.")
+                return FakeResponse(b'{"id": "C1"}')
+            if "/C1" in url:
+                return FakeResponse(b'{"status_code": "FINISHED"}')
+            if "media_publish" in url:
+                return FakeResponse(b'{"id": "M9"}')
+            if "/M9" in url:
+                return FakeResponse(b'{"permalink": "https://ig/p/z"}')
+            raise AssertionError(url)
+
+        link = publish_reel("T", "U", "https://pub/v.mp4", "cap",
+                            collaborators=["artist"], location_id="999",
+                            opener=opener, sleeper=lambda s: None)
+        self.assertEqual(link, "https://ig/p/z")
+        self.assertEqual(calls["n"], 2)                    # retried once
+        self.assertIn("location_id", bodies[0])            # first had both
+        self.assertIn("collaborators", bodies[0])
+        self.assertNotIn("location_id", bodies[1])         # dropped location
+        self.assertIn("collaborators", bodies[1])          # KEPT co-author tag
+
     def test_publish_reel_passes_location_id(self):
         import urllib.parse
         bodies = []
