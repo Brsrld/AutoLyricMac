@@ -1487,8 +1487,12 @@ struct ContentView: View {
                           text: $artistHandle)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 360)
-                    .help("Girersen açıklamaya @kullanıcıadı olarak eklenir "
-                          + "(sanatçıyı etiketler). Boş bırakabilirsin.")
+                    .help("Sanatçıyı iki şekilde etiketler: (1) paylaşımda "
+                          + "ortak yazar (collaborator) daveti — gönderi "
+                          + "'sen ve @kullanıcı' olarak görünür (sanatçının "
+                          + "kabul etmesi gerekir), (2) açıklamaya @kullanıcı "
+                          + "olarak eklenir. Birden fazla için virgülle ayır "
+                          + "(en fazla 3). Boş bırakabilirsin.")
             }
             if let e = captionError {
                 Text(e).font(.caption2).foregroundStyle(.red)
@@ -1704,11 +1708,18 @@ struct ContentView: View {
         // inside it); the title is only used as the YouTube video title.
         let caption = [publishDescription, hashtagLine]
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        // invite the artist handle(s) as Reel co-authors (the visible "tag").
+        // accept several separated by space/comma/newline; the engine caps 3.
+        let collaborators = artistHandle
+            .components(separatedBy: CharacterSet(charactersIn: " ,\n"))
+            .map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "@", with: "") }
+            .filter { !$0.isEmpty }
         runPlanJob("Instagram publish") {
             try await engine.createInstagramPublishJob(
                 sourceJobId: source.jobId, outputPath: outputPath,
                 caption: caption,
-                audioName: publishTitle.trimmingCharacters(in: .whitespaces))
+                audioName: publishTitle.trimmingCharacters(in: .whitespaces),
+                collaborators: collaborators)
         }
     }
 

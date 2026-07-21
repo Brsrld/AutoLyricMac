@@ -243,22 +243,46 @@ def verify_account(access_token, ig_user_id, opener=urllib.request.urlopen):
 
 
 def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
-                 opener=urllib.request.urlopen, sleeper=time.sleep,
-                 progress=None):
+                 collaborators=(), opener=urllib.request.urlopen,
+                 sleeper=time.sleep, progress=None):
     """Container create -> poll FINISHED -> publish -> permalink.
 
     `audio_name` sets the Reel's original-audio title (what shows at the top
     of the reel and lets people find other videos using that sound). It can
     be set only once; we set it to the song name.
+
+    `collaborators` is a list of IG usernames (no '@', max 3) invited as
+    co-authors — the most visible "tag" the API offers (the post shows
+    "you and @artist"). The invite is pending until they accept. A bad
+    username would make Instagram reject the whole container, so if a
+    create WITH collaborators fails we retry once WITHOUT them: the post
+    still goes out (untagged) rather than being lost on a typo.
     """
-    params = {
-        "media_type": "REELS", "video_url": video_url,
-        "caption": caption[:2200], "share_to_feed": "true",
-        "access_token": access_token}
-    if audio_name.strip():
-        params["audio_name"] = audio_name.strip()[:100]
-    created = _graph("POST", f"/{ig_user_id}/media", params, opener)
-    container = created.get("id")
+    def _params():
+        p = {"media_type": "REELS", "video_url": video_url,
+             "caption": caption[:2200], "share_to_feed": "true",
+             "access_token": access_token}
+        if audio_name.strip():
+            p["audio_name"] = audio_name.strip()[:100]
+        return p
+
+    collabs = [c.lstrip("@").strip() for c in (collaborators or [])
+               if str(c).strip()][:3]
+    container = None
+    if collabs:
+        params = _params()
+        params["collaborators"] = json.dumps(collabs)
+        try:
+            created = _graph("POST", f"/{ig_user_id}/media", params, opener)
+            container = created.get("id")
+        except Exception as exc:
+            print(f"[instagram] collaborator invite failed for "
+                  f"{collabs} ({exc}); publishing without the co-author tag",
+                  flush=True)
+            container = None
+    if not container:
+        created = _graph("POST", f"/{ig_user_id}/media", _params(), opener)
+        container = created.get("id")
     if not container:
         raise PublishError("Instagram did not return a media container id.")
 
@@ -322,7 +346,7 @@ class InstagramConnector:
             self.keychain.delete(account)
 
     def publish(self, file_path, caption, progress=None, sleeper=time.sleep,
-                audio_name=""):
+                audio_name="", collaborators=()):
         from pathlib import Path
         path = Path(file_path)
         if not path.is_file():
@@ -354,6 +378,7 @@ class InstagramConnector:
         try:
             permalink = publish_reel(token, user_id, video_url, caption,
                                      audio_name=audio_name,
+                                     collaborators=collaborators,
                                      opener=self.opener, sleeper=sleeper,
                                      progress=progress)
         finally:

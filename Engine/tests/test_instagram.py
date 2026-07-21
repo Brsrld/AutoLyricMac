@@ -122,6 +122,60 @@ class TestGraphFlow(unittest.TestCase):
         self.assertEqual(link, "https://instagr.am/p/x")
         self.assertEqual(len(naps), 2)  # sleeps only between IN_PROGRESS polls
 
+    def test_publish_reel_passes_collaborators(self):
+        import urllib.parse
+        bodies = []
+
+        def opener(req):
+            url = req.full_url
+            if url.endswith("/media"):
+                bodies.append(urllib.parse.parse_qs(
+                    (req.data or b"").decode()))
+                return FakeResponse(b'{"id": "C1"}')
+            if "/C1" in url:
+                return FakeResponse(b'{"status_code": "FINISHED"}')
+            if "media_publish" in url:
+                return FakeResponse(b'{"id": "M9"}')
+            if "/M9" in url:
+                return FakeResponse(b'{"permalink": "https://ig/p/x"}')
+            raise AssertionError(url)
+
+        publish_reel("T", "U", "https://pub/v.mp4", "cap",
+                     collaborators=["@artist", "second"],
+                     opener=opener, sleeper=lambda s: None)
+        self.assertEqual(len(bodies), 1)   # created once, with the tag
+        self.assertEqual(json.loads(bodies[0]["collaborators"][0]),
+                         ["artist", "second"])
+
+    def test_publish_reel_retries_without_collaborators_on_error(self):
+        import urllib.parse
+        bodies, calls = [], {"n": 0}
+
+        def opener(req):
+            url = req.full_url
+            if url.endswith("/media"):
+                calls["n"] += 1
+                bodies.append(urllib.parse.parse_qs(
+                    (req.data or b"").decode()))
+                if calls["n"] == 1:      # first try (with tag) is rejected
+                    raise PublishError("Invalid collaborator username.")
+                return FakeResponse(b'{"id": "C1"}')
+            if "/C1" in url:
+                return FakeResponse(b'{"status_code": "FINISHED"}')
+            if "media_publish" in url:
+                return FakeResponse(b'{"id": "M9"}')
+            if "/M9" in url:
+                return FakeResponse(b'{"permalink": "https://ig/p/y"}')
+            raise AssertionError(url)
+
+        link = publish_reel("T", "U", "https://pub/v.mp4", "cap",
+                            collaborators=["bad handle"],
+                            opener=opener, sleeper=lambda s: None)
+        self.assertEqual(link, "https://ig/p/y")   # still published
+        self.assertEqual(calls["n"], 2)            # retried once
+        self.assertIn("collaborators", bodies[0])  # first had the tag
+        self.assertNotIn("collaborators", bodies[1])  # retry dropped it
+
     def test_publish_reel_container_error(self):
         def opener(req):
             if req.full_url.endswith("/media"):

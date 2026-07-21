@@ -624,14 +624,16 @@ final class EngineClient: ObservableObject {
 
     func createInstagramPublishJob(sourceJobId: String, outputPath: String,
                                    caption: String,
-                                   audioName: String = "") async throws -> String {
+                                   audioName: String = "",
+                                   collaborators: [String] = []) async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "publish_instagram",
                                                      "source_job_id": sourceJobId,
                                                      "output_path": outputPath,
                                                      "caption": caption,
-                                                     "audio_name": audioName],
+                                                     "audio_name": audioName,
+                                                     "collaborators": collaborators],
                                               timeout: 15)
         return created.jobId
     }

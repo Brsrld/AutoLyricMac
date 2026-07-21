@@ -1970,7 +1970,9 @@ class Job:
         try:
             url = InstagramConnector().publish(
                 video, caption=self.publish_meta.get("description", ""),
-                audio_name=audio_name, progress=progress)
+                audio_name=audio_name,
+                collaborators=self.publish_meta.get("collaborators", []),
+                progress=progress)
         except PublishError as exc:
             self.fail("publish_failed", str(exc))
             return
@@ -2184,9 +2186,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 job = Job(kind="publish_instagram",
                           url=str(body.get("output_path") or ""),
                           source_job_id=source_id)
+                collaborators = [str(c).lstrip("@").strip()
+                                 for c in (body.get("collaborators") or [])
+                                 if str(c).strip()]
                 job.publish_meta = {
                     "description": str(body.get("caption") or "")[:2200],
-                    "audio_name": str(body.get("audio_name") or "")[:100]}
+                    "audio_name": str(body.get("audio_name") or "")[:100],
+                    "collaborators": collaborators[:3]}
             elif kind == "publish_youtube":
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):
