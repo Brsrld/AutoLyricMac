@@ -95,6 +95,9 @@ struct ContentView: View {
     @State private var captionBusy = false
     @State private var captionError: String?
     @State private var artistHandle: String = ""
+    // optional location tag (place name or numeric Facebook Place id) for
+    // location-based discovery on the Reel
+    @State private var publishLocation: String = ""
     @State private var publishPrivacy: String = "private"
     @State private var publishedURL: String?
 
@@ -1494,6 +1497,18 @@ struct ContentView: View {
                           + "olarak eklenir. Birden fazla için virgülle ayır "
                           + "(en fazla 3). Boş bırakabilirsin.")
             }
+            HStack(spacing: 6) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.caption2).foregroundStyle(.secondary)
+                TextField("Konum (ör. Istanbul, Turkey — veya sayısal Place ID)",
+                          text: $publishLocation)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 360)
+                    .help("Paylaşıma konum etiketi ekler (konum bazlı keşif). "
+                          + "Yer adı yazarsan bulmaya çalışır; bulunamazsa "
+                          + "konumsuz paylaşır. Sayısal Facebook Place ID en "
+                          + "güvenilir yöntemdir. Boş bırakabilirsin.")
+            }
             if let e = captionError {
                 Text(e).font(.caption2).foregroundStyle(.red)
             }
@@ -1669,6 +1684,7 @@ struct ContentView: View {
         publishDescription = ""
         publishTags = ""
         artistHandle = ""
+        publishLocation = ""
         captionError = nil
         publishedURL = nil
     }
@@ -1719,7 +1735,8 @@ struct ContentView: View {
                 sourceJobId: source.jobId, outputPath: outputPath,
                 caption: caption,
                 audioName: publishTitle.trimmingCharacters(in: .whitespaces),
-                collaborators: collaborators)
+                collaborators: collaborators,
+                location: publishLocation.trimmingCharacters(in: .whitespaces))
         }
     }
 
@@ -2124,6 +2141,12 @@ struct ContentView: View {
                         if status.state == "done",
                            let url = status.result?.videoUrl {
                             publishedURL = url
+                            // open the reel/audio right away so we can find
+                            // our post (and share the sound) without hunting
+                            if let link = URL(string: url),
+                               link.scheme?.hasPrefix("http") == true {
+                                NSWorkspace.shared.open(link)
+                            }
                         }
                         break
                     }

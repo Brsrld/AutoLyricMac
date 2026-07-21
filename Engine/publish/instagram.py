@@ -230,6 +230,31 @@ def _graph(method, path, params, opener):
                            f"{exc.reason}") from exc
 
 
+def resolve_location_id(place, access_token, opener=urllib.request.urlopen):
+    """Best-effort Facebook Place id for a location the user typed.
+
+    A purely numeric string is treated as an id and returned as-is. Otherwise
+    we try the Graph place search; if it's unavailable (permissions) or finds
+    nothing, we return '' so publishing simply proceeds without a location
+    rather than failing. Never raises.
+    """
+    place = str(place or "").strip()
+    if not place:
+        return ""
+    if place.isdigit():
+        return place
+    try:
+        res = _graph("GET", "/search",
+                     {"type": "place", "q": place[:100], "fields": "id,name",
+                      "limit": "1", "access_token": access_token}, opener)
+        data = res.get("data") or []
+        return str(data[0].get("id") or "") if data else ""
+    except Exception as exc:
+        print(f"[instagram] location lookup for {place!r} unavailable "
+              f"({exc}); publishing without a location tag", flush=True)
+        return ""
+
+
 def verify_account(access_token, ig_user_id, opener=urllib.request.urlopen):
     """Confirm the token can see the professional IG account; return name."""
     payload = _graph("GET", f"/{ig_user_id}",
@@ -243,7 +268,8 @@ def verify_account(access_token, ig_user_id, opener=urllib.request.urlopen):
 
 
 def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
-                 collaborators=(), opener=urllib.request.urlopen,
+                 collaborators=(), location_id="",
+                 opener=urllib.request.urlopen,
                  sleeper=time.sleep, progress=None):
     """Container create -> poll FINISHED -> publish -> permalink.
 
@@ -251,12 +277,17 @@ def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
     of the reel and lets people find other videos using that sound). It can
     be set only once; we set it to the song name.
 
-    `collaborators` is a list of IG usernames (no '@', max 3) invited as
-    co-authors — the most visible "tag" the API offers (the post shows
-    "you and @artist"). The invite is pending until they accept. A bad
-    username would make Instagram reject the whole container, so if a
-    create WITH collaborators fails we retry once WITHOUT them: the post
-    still goes out (untagged) rather than being lost on a typo.
+    Optional discovery extras:
+    - `collaborators`: IG usernames (no '@', max 3) invited as co-authors —
+      the most visible "tag" the API offers (the post shows "you and
+      @artist"). The invite is pending until they accept.
+    - `location_id`: a Facebook Place id to tag the post's location, opening
+      location-based discovery.
+
+    A bad username or unusable location id would make Instagram reject the
+    whole container, so if a create WITH the extras fails we retry once
+    WITHOUT them: the post still goes out (untagged) rather than being lost
+    on a typo or a rate-limited attempt.
     """
     def _params():
         p = {"media_type": "REELS", "video_url": video_url,
@@ -268,17 +299,21 @@ def publish_reel(access_token, ig_user_id, video_url, caption, audio_name="",
 
     collabs = [c.lstrip("@").strip() for c in (collaborators or [])
                if str(c).strip()][:3]
+    location_id = str(location_id or "").strip()
     container = None
-    if collabs:
+    if collabs or location_id:
         params = _params()
-        params["collaborators"] = json.dumps(collabs)
+        if collabs:
+            params["collaborators"] = json.dumps(collabs)
+        if location_id:
+            params["location_id"] = location_id
         try:
             created = _graph("POST", f"/{ig_user_id}/media", params, opener)
             container = created.get("id")
         except Exception as exc:
-            print(f"[instagram] collaborator invite failed for "
-                  f"{collabs} ({exc}); publishing without the co-author tag",
-                  flush=True)
+            print(f"[instagram] discovery extras rejected "
+                  f"(collaborators={collabs}, location_id={location_id!r}: "
+                  f"{exc}); publishing without them", flush=True)
             container = None
     if not container:
         created = _graph("POST", f"/{ig_user_id}/media", _params(), opener)
@@ -346,7 +381,7 @@ class InstagramConnector:
             self.keychain.delete(account)
 
     def publish(self, file_path, caption, progress=None, sleeper=time.sleep,
-                audio_name="", collaborators=()):
+                audio_name="", collaborators=(), location=""):
         from pathlib import Path
         path = Path(file_path)
         if not path.is_file():
@@ -375,10 +410,12 @@ class InstagramConnector:
                     f"doğru mu kontrol et:\n{video_url}")
         if progress:
             progress(0.1)
+        location_id = resolve_location_id(location, token, opener=self.opener)
         try:
             permalink = publish_reel(token, user_id, video_url, caption,
                                      audio_name=audio_name,
                                      collaborators=collaborators,
+                                     location_id=location_id,
                                      opener=self.opener, sleeper=sleeper,
                                      progress=progress)
         finally:

@@ -73,6 +73,42 @@ _EMOTIONS = ("love", "longing", "joy", "melancholy", "calm", "energy",
              "nostalgia", "loneliness", "hope")
 
 
+def _compose_audio_name(song, artist):
+    """Join a clean song + artist into a stable "Song — Artist" (<=100 chars).
+
+    Skips the artist when it's empty or already inside the song string, so
+    the same track always yields the same original-audio name.
+    """
+    song = (song or "").strip()
+    artist = (artist or "").strip()
+    name = song
+    if artist and artist.lower() not in song.lower():
+        name = f"{song} — {artist}" if song else artist
+    return name[:100]
+
+
+def _audio_name_for(source_job_id, hint=""):
+    """A clean, consistent "Song — Artist" for the Reel's original audio.
+
+    Tapping a Reel's audio shows every video using that sound, so naming it
+    the same way each time is what makes the sound (and all our reels)
+    findable. Prefers the canonical lyric/project metadata; the UI hint is
+    only used when there's no metadata.
+    """
+    from lyrics.providers import clean_track_name
+    from lyrics.store import LyricsStore
+    from projects import ProjectStore
+    payload = LyricsStore(LYRICS_DB_PATH).get_lyrics(source_job_id) or {}
+    proj = ProjectStore(PROJECTS_DB_PATH).get_project(source_job_id) or {}
+    song = clean_track_name(
+        (proj.get("title") or payload.get("title") or "").strip())
+    if not song:
+        song = clean_track_name((hint or "").strip())
+    artist = clean_track_name(
+        (payload.get("artist") or proj.get("uploader") or "").strip())
+    return _compose_audio_name(song, artist)
+
+
 def _clean_emotion(value):
     """Return the user-picked mood or '' (auto-detect).
 
@@ -227,12 +263,20 @@ def _claude_caption(title, artist, lines, theme, api_key):
         "line, and NO markdown/asterisks anywhere. The 'caption' must be "
         "EXACTLY: one evocative opening line, blank line, a 2-3 sentence "
         f"paragraph that starts with the plain song name ({song}), blank "
-        f"line, then '🎵 {song}'. Hashtags: 8-12 tasteful CamelCase tags "
-        "(no spaces): first the song name, then the ARTIST name as a tag"
+        f"line, then '🎵 {song}'. "
+        "DISCOVERABILITY: Instagram search indexes the caption TEXT itself, "
+        "so the paragraph must read naturally yet contain the searchable "
+        "keywords — weave in the ARTIST name"
+        + (f" ({artist})" if artist else "")
+        + " and the song's genre/style and language/region in plain words "
+        "(still literary, never a keyword list). "
+        "Hashtags: 10-14 tasteful CamelCase tags (no spaces): first the song "
+        "name, then the ARTIST name as a tag"
         + (f" (#{re.sub(r'[^A-Za-z0-9]', '', artist)})" if artist else "")
-        + ", then mood/genre in English (e.g. WorldMusic, Cinematic, "
-        "Atmosphere, Storytelling, MusicFromEverywhere, Instrumental as "
-        "fits), and always end with #Reels #Shorts #Müzik #Keşfet.\n\n"
+        + ", then the GENRE/STYLE and LANGUAGE/REGION in English (e.g. "
+        "WorldMusic, ArabicMusic, TurkishMusic, Cinematic, Atmosphere, "
+        "Storytelling, MusicFromEverywhere, Instrumental as fits), and "
+        "always end with #Reels #Shorts #Müzik #Keşfet #Explore.\n\n"
         "Return ONLY JSON: "
         '{"title": "<song name, optionally — artist>", '
         '"caption": "<the styled multi-line text above, with real newlines>", '
@@ -1197,7 +1241,7 @@ class Job:
         if key:
             try:
                 import llm_cache
-                ck = llm_cache.key_for("caption", "v5-plain-artist",
+                ck = llm_cache.key_for("caption", "v6-seo",
                                        title, artist, theme, *lines)
                 result = llm_cache.get_json(ck)
                 cached = result is not None
@@ -1214,17 +1258,19 @@ class Job:
             song = title or "Bu eser"
             tag = "#" + "".join(ch for ch in song if ch.isalnum())
             art_tag = "#" + "".join(ch for ch in artist if ch.isalnum())
+            artist_line = f" {artist} imzalı bu eser," if artist else ""
             result = {
                 "title": " — ".join(filter(None, [song, artist]))[:90],
                 "caption": (
                     "Bazı ezgiler sözlerinden önce ruhuna dokunur.\n\n"
-                    f"{song}, insanı kendi içine doğru sessiz bir yolculuğa "
-                    "çıkaran, her dinleyişte farklı bir anlam bırakan "
-                    f"eserlerden biri.\n\n🎵 {song}"),
+                    f"{song},{artist_line} insanı kendi içine doğru sessiz "
+                    "bir yolculuğa çıkaran, her dinleyişte farklı bir anlam "
+                    f"bırakan eserlerden biri.\n\n🎵 {song}"),
                 "hashtags": ([tag] + ([art_tag] if artist else []) + [
                              "#MusicFromEverywhere", "#WorldMusic",
                              "#Cinematic", "#Atmosphere", "#Storytelling",
-                             "#Reels", "#Shorts", "#Müzik", "#Keşfet"]),
+                             "#Reels", "#Shorts", "#Müzik", "#Keşfet",
+                             "#Explore"]),
             }
         tags = [str(t).strip() for t in (result.get("hashtags") or [])
                 if str(t).strip()]
@@ -1956,14 +2002,12 @@ class Job:
             self.set(progress=0.1 + 0.8 * frac,
                      message="Instagram is processing the video…")
 
-        # the audio name shown atop the Reel = the song name (so people can
-        # find other videos using this sound); fall back to the project title
-        audio_name = (self.publish_meta.get("audio_name") or "").strip()
-        if not audio_name:
-            from lyrics.providers import clean_track_name
-            from projects import ProjectStore as _PS
-            proj = _PS(PROJECTS_DB_PATH).get_project(self.source_job_id) or {}
-            audio_name = clean_track_name(proj.get("title") or "")
+        # The original-audio name shown atop the Reel — tapping it lists every
+        # video using this sound, so a CLEAN, CONSISTENT "Song — Artist" makes
+        # the sound (and all our reels) findable. Derive it canonically from
+        # the lyric/project metadata; the caller's audio_name is only a hint.
+        audio_name = _audio_name_for(self.source_job_id,
+                                     self.publish_meta.get("audio_name") or "")
 
         self.set(state="downloading", progress=0.05,
                  message="Uploading temporarily and creating the Reel…")
@@ -1972,6 +2016,7 @@ class Job:
                 video, caption=self.publish_meta.get("description", ""),
                 audio_name=audio_name,
                 collaborators=self.publish_meta.get("collaborators", []),
+                location=self.publish_meta.get("location", ""),
                 progress=progress)
         except PublishError as exc:
             self.fail("publish_failed", str(exc))
@@ -2192,7 +2237,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 job.publish_meta = {
                     "description": str(body.get("caption") or "")[:2200],
                     "audio_name": str(body.get("audio_name") or "")[:100],
-                    "collaborators": collaborators[:3]}
+                    "collaborators": collaborators[:3],
+                    "location": str(body.get("location") or "").strip()[:100]}
             elif kind == "publish_youtube":
                 source_id = body.get("source_job_id", "")
                 if not isinstance(source_id, str) or not JOB_ID_RE.match(source_id):

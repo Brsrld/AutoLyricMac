@@ -11,7 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from publish.instagram import (InstagramConnector, PublishError,
-                               TempObjectStore, publish_reel, sigv4_headers,
+                               TempObjectStore, publish_reel,
+                               resolve_location_id, sigv4_headers,
                                verify_account)
 
 
@@ -175,6 +176,49 @@ class TestGraphFlow(unittest.TestCase):
         self.assertEqual(calls["n"], 2)            # retried once
         self.assertIn("collaborators", bodies[0])  # first had the tag
         self.assertNotIn("collaborators", bodies[1])  # retry dropped it
+
+    def test_publish_reel_passes_location_id(self):
+        import urllib.parse
+        bodies = []
+
+        def opener(req):
+            url = req.full_url
+            if url.endswith("/media"):
+                bodies.append(urllib.parse.parse_qs(
+                    (req.data or b"").decode()))
+                return FakeResponse(b'{"id": "C1"}')
+            if "/C1" in url:
+                return FakeResponse(b'{"status_code": "FINISHED"}')
+            if "media_publish" in url:
+                return FakeResponse(b'{"id": "M9"}')
+            if "/M9" in url:
+                return FakeResponse(b'{"permalink": "https://ig/p/loc"}')
+            raise AssertionError(url)
+
+        publish_reel("T", "U", "https://pub/v.mp4", "cap",
+                     location_id="12345", opener=opener,
+                     sleeper=lambda s: None)
+        self.assertEqual(bodies[0]["location_id"], ["12345"])
+
+    def test_resolve_location_numeric_passthrough(self):
+        # a numeric id is used as-is, with no API call
+        self.assertEqual(resolve_location_id("98765", "T",
+                                             opener=graph_opener([])), "98765")
+
+    def test_resolve_location_by_name(self):
+        opener = graph_opener([("/search", {"data": [{"id": "42", "name": "X"}]})])
+        self.assertEqual(resolve_location_id("Istanbul", "T", opener=opener),
+                         "42")
+
+    def test_resolve_location_never_raises(self):
+        # search unavailable (e.g. permissions) -> '' so publishing proceeds
+        err = urllib.error.HTTPError("u", 400, "no perm", {}, io.BytesIO(
+            json.dumps({"error": {"message": "no place search"}}).encode()))
+        self.assertEqual(
+            resolve_location_id("Nowhere", "T",
+                                opener=graph_opener([("/search", err)])), "")
+        self.assertEqual(resolve_location_id("", "T",
+                                             opener=graph_opener([])), "")
 
     def test_publish_reel_container_error(self):
         def opener(req):

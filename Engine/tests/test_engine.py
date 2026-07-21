@@ -156,5 +156,37 @@ class TestDrawnMediaGuard(unittest.TestCase):
             {"provider": "fal_ai", "file_path": "/c/media/x/gen_2.jpg"}))
 
 
+class TestAudioName(unittest.TestCase):
+    """Original-audio name stays clean and consistent for discoverability."""
+
+    def test_song_and_artist_joined(self):
+        from engine import _compose_audio_name
+        self.assertEqual(_compose_audio_name("Ya Sîdî", "Orange Blossom"),
+                         "Ya Sîdî — Orange Blossom")
+
+    def test_artist_already_in_song_not_repeated(self):
+        from engine import _compose_audio_name
+        self.assertEqual(_compose_audio_name("Adele - Hello", "Adele"),
+                         "Adele - Hello")
+
+    def test_empty_artist_or_song(self):
+        from engine import _compose_audio_name
+        self.assertEqual(_compose_audio_name("Hello", ""), "Hello")
+        self.assertEqual(_compose_audio_name("", "Adele"), "Adele")
+
+    def test_capped_at_100(self):
+        from engine import _compose_audio_name
+        self.assertLessEqual(len(_compose_audio_name("s" * 80, "a" * 80)), 100)
+
+
+class TestEmotionClean(unittest.TestCase):
+    def test_known_and_freetext_and_junk(self):
+        from engine import _clean_emotion
+        self.assertEqual(_clean_emotion("Hope"), "hope")
+        self.assertEqual(_clean_emotion("ISYAN"), "isyan")
+        self.assertEqual(_clean_emotion("a!!b"), "ab")
+        self.assertEqual(_clean_emotion("   "), "")
+
+
 if __name__ == "__main__":
     unittest.main()
