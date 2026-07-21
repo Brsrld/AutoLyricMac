@@ -142,7 +142,7 @@ _VIEWS = ["close-up", "wide establishing shot", "side profile view",
           "low angle view", "overhead view", "three-quarter view"]
 
 
-def build_prompt(scene, style="photo", variant=0, theme=""):
+def build_prompt(scene, style="photo", variant=0, theme="", avoid=""):
     """Prompt from the scene's queries/emotion and the chosen art style.
 
     `variant` >0 rotates the lead query and adds a distinct camera angle so
@@ -174,11 +174,18 @@ def build_prompt(scene, style="photo", variant=0, theme=""):
     if theme:
         parts.append(f"subtle {theme[:100]} undertone")
     parts.append(_NO_TEXT)
+    # negative directives from the theme (e.g. 'no hands, no fingers') —
+    # stated strongly so FLUX keeps them out of the frame
+    avoid = (avoid or "").strip()
+    if avoid:
+        terms = [t.strip() for t in avoid.split(",") if t.strip()]
+        parts.append(", ".join(f"no {t}" for t in terms[:10]))
+        parts.append("without " + " or ".join(terms[:6]))
     return ", ".join(parts)
 
 
 def generate_image(scene, api_key, opener=urllib.request.urlopen,
-                   style="photo", variant=0, theme=""):
+                   style="photo", variant=0, theme="", avoid=""):
     """Generate one vertical image; returns (MediaCandidate, image_bytes).
 
     Results are cached by prompt in Cache/genai/ — the same prompt is never
@@ -186,7 +193,8 @@ def generate_image(scene, api_key, opener=urllib.request.urlopen,
     `variant` yields a distinct image (angle/query) for a scene's pool;
     `theme` steers the whole image toward the user's text.
     """
-    prompt = build_prompt(scene, style, variant=variant, theme=theme)
+    prompt = build_prompt(scene, style, variant=variant, theme=theme,
+                          avoid=avoid)
     import sys as _sys
     from pathlib import Path as _P
     _sys.path.insert(0, str(_P(__file__).resolve().parent.parent))

@@ -121,6 +121,56 @@ def _alt_queries(scene, theme, api_key, avoid=()):
     return fresh[:3]
 
 
+def _theme_directives(theme, api_key):
+    """Split a theme note into English include-phrases and avoid-terms.
+
+    Handles NEGATIVE directives — 'el ve parmakları engelle' → avoid
+    ['hands', 'fingers'] (instead of turning 'hands fingers' into a query
+    that draws them). Uses Claude (cached) when available; returns empty
+    lists otherwise so the caller keeps its heuristic for the include part.
+    """
+    theme = (theme or "").strip()
+    if not theme or not api_key:
+        return {"include": [], "avoid": []}
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import json as _json
+        import urllib.request as _rq
+
+        import llm_cache
+        ck = llm_cache.key_for("themedir", theme)
+        cached = llm_cache.get_json(ck)
+        if cached is not None:
+            return cached
+        prompt = (
+            "A user wrote a short note guiding the imagery of a music video "
+            "(it may be Turkish). Split it into what to INCLUDE and what to "
+            "AVOID in the pictures, translated to English. Negative wording "
+            "like 'el ve parmakları engelle', 'X olmasın', 'no X', 'without "
+            "X' means AVOID X. Return ONLY JSON "
+            '{"include":[concise english image phrases], '
+            '"avoid":[english nouns/things to exclude]}.\nNote: ' + theme)
+        body = _json.dumps({"model": "claude-haiku-4-5-20251001",
+                            "max_tokens": 400,
+                            "messages": [{"role": "user",
+                                          "content": prompt}]}).encode()
+        req = _rq.Request("https://api.anthropic.com/v1/messages", data=body,
+                          headers={"x-api-key": api_key,
+                                   "anthropic-version": "2023-06-01",
+                                   "content-type": "application/json"})
+        with _rq.urlopen(req, timeout=40) as resp:
+            txt = _json.loads(resp.read().decode())["content"][0]["text"]
+        obj = _json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+        out = {"include": [str(x).strip() for x in obj.get("include", [])
+                           if str(x).strip()][:8],
+               "avoid": [str(x).strip() for x in obj.get("avoid", [])
+                         if str(x).strip()][:10]}
+        llm_cache.put_json(ck, out)
+        return out
+    except Exception:
+        return {"include": [], "avoid": []}
+
+
 def _claude_caption(title, artist, lines, theme, api_key):
     """Reach-optimized {title, caption, hashtags} for a lyric Reel/Short."""
     import json as _json
@@ -1299,43 +1349,57 @@ class Job:
             (payload or {}).get("artist")]))
         theme = self.publish_meta.get("theme", "")
         theme_queries = []
+        avoid_terms = []
         if theme:
             # user-provided theme drives song-level queries + LLM directions
             title_hint = f"{title_hint} — theme: {theme}" if title_hint else theme
-            from plan.semantic import extract_semantics as _sem
-            from lyrics.translate import (ensure_argos_pair, looks_turkish,
-                                          _argos_translate)
-            # decompose the theme into many short, concrete queries: split
-            # into fragments, translate each, keep 2-6 word noun phrases
-            is_tr = looks_turkish([theme])
-            can_translate = False
+            # split into include (positive) + avoid (negative directives)
+            akey = None
             try:
-                can_translate = is_tr and ensure_argos_pair("tr", "en")
+                from publish.youtube import Keychain
+                akey = Keychain().get("anthropic_api_key")
             except Exception:
                 pass
-            fragments = [f.strip() for f in
-                         re.split(r"[.,;:\n]", theme) if f.strip()][:14]
-            for frag in fragments:
-                frag_en = frag
-                if can_translate:
-                    try:
-                        frag_en = _argos_translate(frag, "tr", "en")
-                    except Exception:
-                        continue
-                words = [w for w in re.findall(r"[a-zA-Z']+", frag_en.lower())
-                         if w not in ("the", "a", "an", "of", "and", "or",
-                                      "in", "on", "to", "is", "are", "that",
-                                      "with", "for", "it", "who", "has",
-                                      "have", "been", "his", "her", "its")]
-                if not 1 <= len(words) <= 7:
-                    words = words[:6]
-                if len(words) >= 2:
-                    q = " ".join(words[:6])
-                    if q not in theme_queries:
+            dirs = _theme_directives(theme, akey)
+            theme_queries = list(dirs.get("include") or [])
+            avoid_terms = list(dirs.get("avoid") or [])
+            # fallback (no Claude directives): heuristic decomposition into
+            # positive queries — split on punctuation, translate, keep nouns.
+            # Skipped when Claude already gave include phrases so a negative
+            # clause is never re-added as a positive query.
+            if not theme_queries:
+                from plan.semantic import extract_semantics as _sem
+                from lyrics.translate import (ensure_argos_pair, looks_turkish,
+                                              _argos_translate)
+                is_tr = looks_turkish([theme])
+                can_translate = False
+                try:
+                    can_translate = is_tr and ensure_argos_pair("tr", "en")
+                except Exception:
+                    pass
+                fragments = [f.strip() for f in
+                             re.split(r"[.,;:\n]", theme) if f.strip()][:14]
+                for frag in fragments:
+                    frag_en = frag
+                    if can_translate:
+                        try:
+                            frag_en = _argos_translate(frag, "tr", "en")
+                        except Exception:
+                            continue
+                    words = [w for w in re.findall(r"[a-zA-Z']+", frag_en.lower())
+                             if w not in ("the", "a", "an", "of", "and", "or",
+                                          "in", "on", "to", "is", "are", "that",
+                                          "with", "for", "it", "who", "has",
+                                          "have", "been", "his", "her", "its")]
+                    if not 1 <= len(words) <= 7:
+                        words = words[:6]
+                    if len(words) >= 2:
+                        q = " ".join(words[:6])
+                        if q not in theme_queries:
+                            theme_queries.append(q)
+                for q in _sem(theme)["queries"][:2]:
+                    if q not in theme_queries and "abstract light" not in q:
                         theme_queries.append(q)
-            for q in _sem(theme)["queries"][:2]:
-                if q not in theme_queries and "abstract light" not in q:
-                    theme_queries.append(q)
             theme_queries = theme_queries[:10]
             print(f"[engine] job {self.id} plan: theme queries "
                   f"{theme_queries}", flush=True)
@@ -1384,6 +1448,7 @@ class Job:
         # generation can weight it heavily, not just via scene queries
         plan["theme"] = theme
         plan["theme_queries"] = theme_queries
+        plan["avoid"] = avoid_terms          # negative theme directives
         self._plan_path().write_text(json.dumps(plan, indent=1),
                                      encoding="utf-8")
         from projects import ProjectStore
@@ -1435,6 +1500,7 @@ class Job:
         # phrases preferred, raw text otherwise)
         theme_hint = "; ".join((plan.get("theme_queries") or [])[:4]) \
             or (plan.get("theme") or "")
+        avoid_hint = ", ".join((plan.get("avoid") or [])[:10])  # exclude these
         store = MediaStore(MEDIA_DB_PATH)
         for provider, ref in self.exclude_assets:
             store.exclude_asset(self.source_job_id, provider, ref)
@@ -1529,7 +1595,8 @@ class Job:
                     scene["scene_index"] = scene.get("scene_index", i)
                     cand, data = generate_image(scene, draw_key,
                                                 style=art_style,
-                                                theme=theme_hint)
+                                                theme=theme_hint,
+                                                avoid=avoid_hint)
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     gen_path = dest_dir / f"drawn_{i}_{self.id[:6]}.jpg"
                     gen_path.write_bytes(data)
@@ -1546,7 +1613,8 @@ class Job:
                         try:
                             _c2, d2 = generate_image(scene, draw_key,
                                                      style=art_style, variant=k,
-                                                     theme=theme_hint)
+                                                     theme=theme_hint,
+                                                     avoid=avoid_hint)
                             ep = dest_dir / f"drawn_{i}_{k}_{self.id[:6]}.jpg"
                             ep.write_bytes(d2)
                             extra_paths.append(str(ep))
@@ -1607,7 +1675,7 @@ class Job:
                         scene["scene_index"] = scene.get("scene_index", i)
                         cand, data = generate_image(
                             scene, fk, style=(art_style if want_ai else "photo"),
-                            theme=theme_hint)
+                            theme=theme_hint, avoid=avoid_hint)
                         dest_dir.mkdir(parents=True, exist_ok=True)
                         gp = dest_dir / f"gen_{i}_{self.id[:6]}.jpg"
                         gp.write_bytes(data)
@@ -1645,7 +1713,8 @@ class Job:
                         from media.genai import generate_image
                         scene["scene_index"] = scene.get("scene_index", i)
                         cand, data = generate_image(scene, fal_key,
-                                                    theme=theme_hint)
+                                                    theme=theme_hint,
+                                                    avoid=avoid_hint)
                         dest_dir.mkdir(parents=True, exist_ok=True)
                         gen_path = dest_dir / f"gen_{i}_{self.id[:6]}.jpg"
                         gen_path.write_bytes(data)
