@@ -67,6 +67,18 @@ def _clean_art_style(value):
     return v if v in ART_STYLES else None
 
 
+# emotions the user may pick to steer the song's mood (palette + image
+# meaning); anything else means "let the analyzer decide"
+_EMOTIONS = ("love", "longing", "joy", "melancholy", "calm", "energy",
+             "nostalgia", "loneliness", "hope")
+
+
+def _clean_emotion(value):
+    """Return a valid user-picked emotion or '' (auto-detect)."""
+    v = str(value or "").strip().lower()
+    return v if v in _EMOTIONS else ""
+
+
 def _alt_queries(scene, theme, api_key, avoid=()):
     """Fresh alternative image-search phrases for one scene.
 
@@ -473,6 +485,7 @@ class Job:
         self.art_style = None            # plan/media job: AI-draw art style
         self.ai_images = False           # media job: AI-draw collage images
         self.instrumental = False        # plan job: no lyrics, draw from theme
+        self.emotion_override = ""        # plan job: user-picked song mood
         self.motion_effects = False      # render job: flicker + breathing
         self.sync_offset = 0.0           # render job: lyrics↔audio nudge (s)
         self.publish_meta = {}           # publish job: title/desc/privacy
@@ -1440,7 +1453,9 @@ class Job:
                                 self.style, seg_start, seg_end,
                                 title_hint=title_hint,
                                 extra_queries=theme_queries,
-                                vocal_segments=vocal_segs, **kwargs)
+                                vocal_segments=vocal_segs,
+                                emotion_override=self.emotion_override,
+                                **kwargs)
         plan["source_job_id"] = self.source_job_id
         plan["art_style"] = self.art_style or "storybook"
         plan["instrumental"] = bool(self.instrumental)
@@ -2229,6 +2244,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                               target_seconds=target, segment_start=seg_start)
                     job.art_style = _clean_art_style(body.get("art_style"))
                     job.instrumental = bool(body.get("instrumental"))
+                    job.emotion_override = _clean_emotion(body.get("emotion"))
                     job.publish_meta = {
                         "theme": str(body.get("theme") or "").strip()[:300]}
                 else:

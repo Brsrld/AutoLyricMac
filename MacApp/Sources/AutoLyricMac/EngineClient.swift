@@ -449,7 +449,8 @@ final class EngineClient: ObservableObject {
                        segmentStart: Double, targetSeconds: Int,
                        theme: String = "",
                        artStyle: String = "storybook",
-                       instrumental: Bool = false) async throws -> String {
+                       instrumental: Bool = false,
+                       emotion: String = "") async throws -> String {
         struct Created: Decodable { let jobId: String }
         let created: Created = try await post(path: "jobs",
                                               body: ["kind": "plan",
@@ -459,7 +460,8 @@ final class EngineClient: ObservableObject {
                                                      "target_seconds": targetSeconds,
                                                      "theme": theme,
                                                      "art_style": artStyle,
-                                                     "instrumental": instrumental],
+                                                     "instrumental": instrumental,
+                                                     "emotion": emotion],
                                               timeout: 15)
         return created.jobId
     }

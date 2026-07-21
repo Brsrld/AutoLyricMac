@@ -57,6 +57,9 @@ struct ContentView: View {
     @State private var artStyle: String = "storybook"
     @State private var aiImages: Bool = false
     @State private var instrumentalMode: Bool = false
+    // user-picked song mood ("" = let the analyzer decide); the auto
+    // detector often guesses wrong, so let the user set it
+    @State private var emotionChoice: String = ""
     @State private var motionEffects: Bool = false
     @State private var syncOffset: Double = 0.0
     @State private var planJob: JobStatus?
@@ -552,7 +555,8 @@ struct ContentView: View {
                     engine.createPlanJob(sourceJobId: sourceId, style: style,
                                          segmentStart: segmentStart,
                                          targetSeconds: planSeconds,
-                                         theme: planTheme.trimmingCharacters(in: .whitespaces))
+                                         theme: planTheme.trimmingCharacters(in: .whitespaces),
+                                         emotion: emotionChoice)
                 ) { planJob = $0 }
                 guard status.state == "done" else { throw PipelineStop(status) }
                 let resolvedStyle = status.result?.style ?? "archiveCollage"
@@ -1110,6 +1114,30 @@ struct ContentView: View {
                       text: $planTheme)
                 .textFieldStyle(.roundedBorder)
                 .help("Guides image search for every scene; rebuild the plan after changing it")
+
+            HStack(spacing: 8) {
+                Text("Şarkının duygusu")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Şarkının duygusu", selection: $emotionChoice) {
+                    Text("Otomatik (AI bulsun)").tag("")
+                    Text("Aşk").tag("love")
+                    Text("Özlem").tag("longing")
+                    Text("Neşe").tag("joy")
+                    Text("Hüzün").tag("melancholy")
+                    Text("Sakinlik").tag("calm")
+                    Text("Enerji").tag("energy")
+                    Text("Nostalji").tag("nostalgia")
+                    Text("Yalnızlık").tag("loneliness")
+                    Text("Umut").tag("hope")
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                Text("Tüm şarkının rengini/moodunu belirler. Değiştirince planı yeniden kur.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             Toggle("Sadece melodi (enstrümantal) — temadan resim çizsin, altyazı yok",
                    isOn: $instrumentalMode)
@@ -2115,7 +2143,8 @@ struct ContentView: View {
                                            targetSeconds: seconds,
                                            theme: theme,
                                            artStyle: artStyle,
-                                           instrumental: instrumentalMode)
+                                           instrumental: instrumentalMode,
+                                           emotion: emotionChoice)
         }
     }
 

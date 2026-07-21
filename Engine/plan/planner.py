@@ -138,7 +138,7 @@ def _vocal_window(start, end, vocal_segments, min_overlap=0.3):
 
 def build_scene_plan(lines, analysis, style, segment_start, segment_end,
                      semantics_fn=extract_semantics, title_hint="",
-                     extra_queries=(), vocal_segments=()):
+                     extra_queries=(), vocal_segments=(), emotion_override=""):
     """Build the structured scene plan for a segment.
 
     `lines`: lyric dicts with absolute start/end (only timed lines are used):
@@ -185,8 +185,10 @@ def build_scene_plan(lines, analysis, style, segment_start, segment_end,
     style_key = style if style in _DURATIONS else rec_style
     # ONE emotion for the whole song: per-line emotions swing (hope -> sad ->
     # hope) and make the palette/mood — and the images' meaning — drift.
-    # A single song-level emotion keeps every scene coherent.
-    song_emotion = dominant_emotion(emotion_totals)
+    # A single song-level emotion keeps every scene coherent. The user can
+    # override it (they know the song's feel better than the auto-detector).
+    song_emotion = (emotion_override if emotion_override in EMOTION_QUERIES
+                    else dominant_emotion(emotion_totals))
 
     all_subjects = []
     for ln in timed:

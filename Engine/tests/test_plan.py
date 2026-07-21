@@ -150,6 +150,22 @@ class TestScenePlan(unittest.TestCase):
     def test_deterministic(self):
         self.assertEqual(self.plan(), self.plan())
 
+    def test_emotion_override_applies_to_every_scene(self):
+        plan = build_scene_plan(make_lines(), make_analysis(),
+                                "archiveCollage", 0, 45,
+                                emotion_override="hope")
+        emotions = {s["emotion"] for s in plan["scenes"]}
+        self.assertEqual(emotions, {"hope"})
+
+    def test_invalid_emotion_override_falls_back_to_auto(self):
+        auto = build_scene_plan(make_lines(), make_analysis(),
+                                "archiveCollage", 0, 45)
+        forced = build_scene_plan(make_lines(), make_analysis(),
+                                  "archiveCollage", 0, 45,
+                                  emotion_override="not-an-emotion")
+        self.assertEqual([s["emotion"] for s in forced["scenes"]],
+                         [s["emotion"] for s in auto["scenes"]])
+
     def test_no_lines_yields_ambient_plan(self):
         plan = build_scene_plan([], make_analysis(), "archiveCollage", 0, 30)
         self.assertGreaterEqual(plan["scene_count"], 1)
